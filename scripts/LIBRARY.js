@@ -4,18 +4,16 @@
 // Library-Centric Hook Pattern: this single function handles
 // input commands, context injection, and output delivery.
 // The Input/Context/Output tabs are one-liners that call DCP().
-//
-// SETUP:
-//   Library tab  → this file
-//   Input tab    → INPUT_HOOK.js
-//   Output tab   → OUTPUT_HOOK.js
-//   Context tab  → CONTEXT_HOOK.js
 // ============================================================
 
-globalThis.DCP = function DCP(hook) {
+globalThis.DCP = function DCP(hook, inputText) {
   "use strict";
 
-  // === STATE INIT ===
+  // Back-compat: if caller doesn't pass inputText, use globalThis.text.
+  if (typeof inputText !== "string") {
+    inputText = (typeof globalThis.text === "string") ? globalThis.text : "";
+  }
+
   if (!state.dcp) {
     state.dcp = {
       profiles: {},
@@ -29,10 +27,10 @@ globalThis.DCP = function DCP(hook) {
     "relationships", "speech", "mannerisms", "species", "other"
   ];
 
-  // === HELPERS ===
-
   function isWordBound(ch) {
-    return !ch || " \t\n\r.,!?;:'\"-()[]{}/<>@#$%^&*~`+=|\\".indexOf(ch) !== -1;
+    if (!ch) return true;
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") return true;
+    return ".,!?;:'\"-()[]{}/<>@#$%^&*~`+=|\\".indexOf(ch) !== -1;
   }
 
   function containsWord(str, word) {
@@ -55,7 +53,6 @@ globalThis.DCP = function DCP(hook) {
     return total;
   }
 
-  // Splits keyword string by commas if present, otherwise by spaces
   function parseKeywords(str) {
     var arr = [];
     var parts = (str.indexOf(",") !== -1) ? str.split(",") : str.split(" ");
@@ -66,18 +63,15 @@ globalThis.DCP = function DCP(hook) {
     return arr;
   }
 
-  // ================================================================
-  //  INPUT — command parsing
-  //  Supports ;; as batch separator and /profile import for bulk entry
-  //  Sets globalThis.stop = true so commands skip AI generation
-  // ================================================================
   if (hook === "input") {
-    var raw = (globalThis.text || "").trim();
+    var outText = inputText;
+    var outStop = false;
+    var raw = outText.trim();
 
-    // Fast path: if no /profile anywhere, skip entirely
-    if (raw.indexOf("/profile") === -1) return;
+    if (raw.indexOf("/profile") === -1) {
+      return { text: outText };
+    }
 
-    // Split on ;; for batch commands
     var parts = raw.split(";;");
     var results = [];
     var hasCommand = false;
@@ -93,7 +87,6 @@ globalThis.DCP = function DCP(hook) {
       var action = (spIdx === -1 ? argStr : argStr.substring(0, spIdx)).toLowerCase();
       var rest = spIdx === -1 ? "" : argStr.substring(spIdx + 1).trim();
 
-      // --- HELP ---
       if (action === "" || action === "help") {
         results.push(
           "=== DCP Commands ===\n" +
@@ -112,25 +105,18 @@ globalThis.DCP = function DCP(hook) {
         );
       }
 
-      // --- SECTIONS ---
       else if (action === "sections") {
         results.push("Sections: " + SECTIONS.join(", "));
       }
 
-      // --- LIST ---
       else if (action === "list") {
         var names = [];
         for (var k in S.profiles) {
-          if (S.profiles.hasOwnProperty(k)) {
-            names.push(k + " (" + profileSize(S.profiles[k]) + ")");
-          }
+          if (S.profiles.hasOwnProperty(k)) names.push(k + " (" + profileSize(S.profiles[k]) + ")");
         }
-        results.push(names.length === 0
-          ? "No profiles stored."
-          : "Profiles: " + names.join(", "));
+        results.push(names.length === 0 ? "No profiles stored." : "Profiles: " + names.join(", "));
       }
 
-      // --- ADD ---
       else if (action === "add") {
         var name = rest.split(" ")[0];
         if (!name) { results.push("Usage: /profile add <name>"); continue; }
@@ -139,7 +125,6 @@ globalThis.DCP = function DCP(hook) {
         results.push("Created " + name + ".");
       }
 
-      // --- REMOVE ---
       else if (action === "remove" || action === "delete") {
         var name = rest.split(" ")[0];
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
@@ -147,7 +132,6 @@ globalThis.DCP = function DCP(hook) {
         results.push("Removed " + name + ".");
       }
 
-      // --- SHOW ---
       else if (action === "show") {
         var name = rest.split(" ")[0];
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
@@ -165,7 +149,6 @@ globalThis.DCP = function DCP(hook) {
         results.push(lines.join("\n"));
       }
 
-      // --- SET ---
       else if (action === "set") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) { results.push("Usage: /profile set <name> <section> <text>"); continue; }
@@ -181,7 +164,6 @@ globalThis.DCP = function DCP(hook) {
         results.push(name + "." + section + " set (" + val.length + " chars)");
       }
 
-      // --- APPEND ---
       else if (action === "append") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) { results.push("Usage: /profile append <name> <section> <text>"); continue; }
@@ -197,7 +179,6 @@ globalThis.DCP = function DCP(hook) {
         results.push(name + "." + section + " appended (" + S.profiles[name].sections[section].length + " chars)");
       }
 
-      // --- KEYWORDS ---
       else if (action === "keywords") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) {
@@ -213,7 +194,6 @@ globalThis.DCP = function DCP(hook) {
         results.push("Keywords for " + name + ": " + S.profiles[name].keywords.join(", "));
       }
 
-      // --- IMPORT (bulk set all sections in one command) ---
       else if (action === "import") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) {
@@ -222,13 +202,8 @@ globalThis.DCP = function DCP(hook) {
         }
         var name = rest.substring(0, sp1);
         var body = rest.substring(sp1 + 1).trim();
+        if (!S.profiles[name]) S.profiles[name] = { keywords: [name.toLowerCase()], sections: {} };
 
-        // Auto-create profile if it doesn't exist
-        if (!S.profiles[name]) {
-          S.profiles[name] = { keywords: [name.toLowerCase()], sections: {} };
-        }
-
-        // Parse [tag] markers: [keywords], [appearance], [personality], etc.
         var count = 0;
         var currentKey = null;
         var sectionStart = -1;
@@ -242,13 +217,11 @@ globalThis.DCP = function DCP(hook) {
 
           var tag = body.substring(ob + 1, cb).toLowerCase().trim();
           if (tag === "keywords" || SECTIONS.indexOf(tag) !== -1) {
-            // Save previous section
             if (currentKey !== null && sectionStart >= 0) {
               var content = body.substring(sectionStart, ob).trim();
               if (content) {
-                if (currentKey === "keywords") {
-                  S.profiles[name].keywords = parseKeywords(content);
-                } else {
+                if (currentKey === "keywords") S.profiles[name].keywords = parseKeywords(content);
+                else {
                   S.profiles[name].sections[currentKey] = content;
                   count++;
                 }
@@ -261,13 +234,12 @@ globalThis.DCP = function DCP(hook) {
             pos = cb + 1;
           }
         }
-        // Save last section
+
         if (currentKey !== null && sectionStart >= 0 && sectionStart <= body.length) {
           var content = body.substring(sectionStart).trim();
           if (content) {
-            if (currentKey === "keywords") {
-              S.profiles[name].keywords = parseKeywords(content);
-            } else {
+            if (currentKey === "keywords") S.profiles[name].keywords = parseKeywords(content);
+            else {
               S.profiles[name].sections[currentKey] = content;
               count++;
             }
@@ -277,7 +249,6 @@ globalThis.DCP = function DCP(hook) {
         results.push("Imported " + count + " sections for " + name + " (" + profileSize(S.profiles[name]) + " chars)");
       }
 
-      // --- EXPORT (outputs re-importable command) ---
       else if (action === "export") {
         var name = rest.split(" ")[0];
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
@@ -285,14 +256,11 @@ globalThis.DCP = function DCP(hook) {
         var out = "/profile import " + name + " [keywords] " + prof.keywords.join(",");
         for (var s = 0; s < SECTIONS.length; s++) {
           var sec = SECTIONS[s];
-          if (prof.sections[sec]) {
-            out += " [" + sec + "] " + prof.sections[sec];
-          }
+          if (prof.sections[sec]) out += " [" + sec + "] " + prof.sections[sec];
         }
         results.push(out);
       }
 
-      // --- CONFIG ---
       else if (action === "config") {
         if (!rest) {
           results.push("Config: budget=" + S.config.budget + " | fallback=" + S.config.fallback + " | debug=" + (S.config.debug ? "on" : "off"));
@@ -319,38 +287,31 @@ globalThis.DCP = function DCP(hook) {
         }
       }
 
-      // --- UNKNOWN ---
       else {
         results.push("Unknown: " + action + ". Try /profile help");
       }
     }
 
-    // Deliver results and stop the game loop (no AI generation)
     if (hasCommand) {
       var msg = results.join("\n---\n");
       state.message = msg;
       state.dcp._pending = msg;
-      globalThis.text = " ";
-      globalThis.stop = true;
+      outText = " ";
+      outStop = true;
     }
-    return;
+
+    return outStop ? { text: outText, stop: true } : { text: outText };
   }
 
-  // ================================================================
-  //  CONTEXT — dynamic character injection
-  //  Scans recent history for active characters, scores categories,
-  //  and injects the most relevant sections into AI context
-  // ================================================================
   if (hook === "context") {
-    var text = globalThis.text || "";
+    var text = inputText;
     var profiles = S.profiles;
     var pkeys = [];
     for (var k in profiles) {
       if (profiles.hasOwnProperty(k)) pkeys.push(k);
     }
-    if (pkeys.length === 0) return;
+    if (pkeys.length === 0) return { text: text };
 
-    // Gather recent history
     var hist = (typeof history !== "undefined") ? history : [];
     var lookback = Math.min(6, hist.length);
     var recentText = "";
@@ -360,7 +321,6 @@ globalThis.DCP = function DCP(hook) {
     recentText = recentText.toLowerCase();
     var textLower = text.toLowerCase();
 
-    // Category keywords for scene analysis
     var KEYWORDS = {
       appearance: ["look","looks","beautiful","pretty","handsome","eyes","hair","face","skin","body","tall","short","wearing","outfit","clothes","dress","armor","appearance","describe"],
       personality: ["feel","feels","feeling","emotion","mood","happy","sad","angry","nervous","excited","calm","shy","confident","afraid","love","hate","trust","kind","cruel","gentle","friendly","laugh","cry","smile","frown","blush"],
@@ -373,7 +333,6 @@ globalThis.DCP = function DCP(hook) {
       species: ["species","monster","creature","beast","tail","wings","claws","fangs","scales","fur","horns","legs","limbs","human","inhuman","lamia","arachne","centaur","harpy","vampire","dragon","demon","anatomy","nature","instinct","spider","silk","web","thread","threads","spinnerets"]
     };
 
-    // Find active characters (mentioned in recent context)
     var active = [];
     for (var n = 0; n < pkeys.length; n++) {
       var charName = pkeys[n];
@@ -389,9 +348,8 @@ globalThis.DCP = function DCP(hook) {
       }
       if (found) active.push(charName);
     }
-    if (active.length === 0) return;
+    if (active.length === 0) return { text: text };
 
-    // Score categories by keyword frequency
     var scores = {};
     for (var cat in KEYWORDS) {
       if (!KEYWORDS.hasOwnProperty(cat)) continue;
@@ -404,14 +362,12 @@ globalThis.DCP = function DCP(hook) {
       scores[cat] = score;
     }
 
-    // Rank categories descending
     var ranked = [];
-    for (var cat in scores) {
-      if (scores.hasOwnProperty(cat)) ranked.push({ cat: cat, score: scores[cat] });
+    for (var c in scores) {
+      if (scores.hasOwnProperty(c)) ranked.push({ cat: c, score: scores[c] });
     }
     ranked.sort(function(a, b) { return b.score - a.score; });
 
-    // Build injection per active character
     var budget = S.config.budget;
     var fallback = S.config.fallback;
     var injections = [];
@@ -449,7 +405,6 @@ globalThis.DCP = function DCP(hook) {
         }
       }
 
-      // Fallback: always inject at least one section
       if (charParts.length === 0 && prof.sections[fallback]) {
         var fb = prof.sections[fallback];
         var maxFb = budget - header.length - fallback.length - 4;
@@ -459,45 +414,37 @@ globalThis.DCP = function DCP(hook) {
         }
       }
 
-      if (charParts.length > 0) {
-        injections.push(header + "\n" + charParts.join("\n"));
-      }
+      if (charParts.length > 0) injections.push(header + "\n" + charParts.join("\n"));
     }
 
-    // Insert injection block into context
     if (injections.length > 0) {
       var block = "\n[Character Detail]\n" + injections.join("\n\n") + "\n[/Character Detail]\n";
       var maxChars = (typeof info !== "undefined" && info.maxChars) ? info.maxChars : 8000;
 
       if (text.length + block.length < maxChars) {
         var lastNl = text.lastIndexOf("\n");
-        if (lastNl > 0) {
-          globalThis.text = text.substring(0, lastNl) + block + text.substring(lastNl);
-        } else {
-          globalThis.text = text + block;
-        }
+        if (lastNl > 0) text = text.substring(0, lastNl) + block + text.substring(lastNl);
+        else text = text + block;
 
         if (S.config.debug) {
           var topCats = [];
-          for (var t = 0; t < Math.min(3, ranked.length); t++) {
-            topCats.push(ranked[t].cat + ":" + ranked[t].score);
-          }
+          for (var t = 0; t < Math.min(3, ranked.length); t++) topCats.push(ranked[t].cat + ":" + ranked[t].score);
           state.dcpDebugContext = "Injected " + block.length + " chars for " + active.join(", ") + " | Top: " + topCats.join(", ");
         }
       }
     }
-    return;
+
+    return { text: text };
   }
 
-  // ================================================================
-  //  OUTPUT — fallback delivery
-  //  If stop:true didn't prevent AI generation, deliver results here
-  // ================================================================
   if (hook === "output") {
+    var output = inputText;
     if (state.dcp._pending) {
-      globalThis.text = state.dcp._pending;
+      output = state.dcp._pending;
       state.dcp._pending = "";
     }
-    return;
+    return { text: output };
   }
+
+  return { text: inputText };
 };
