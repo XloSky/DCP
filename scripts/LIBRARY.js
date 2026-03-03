@@ -66,6 +66,24 @@ globalThis.DCP = function DCP(hook) {
     return arr;
   }
 
+
+  // BetterDungeon / BetterScripts helpers (safe no-op unless extension is installed)
+  function bdMessage(msg) {
+    return "[[BD:" + JSON.stringify(msg) + ":BD]]";
+  }
+
+  function bdWidget(id, config) {
+    return bdMessage({ type: "widget", widgetId: id, action: "create", config: config });
+  }
+
+  function bdDestroy(id) {
+    return bdMessage({ type: "widget", widgetId: id, action: "destroy" });
+  }
+
+  function bdClearAll() {
+    return bdMessage({ type: "clearAll" });
+  }
+
   // ================================================================
   //  INPUT — command parsing
   //  Supports ;; as batch separator and /profile import for bulk entry
@@ -498,6 +516,36 @@ globalThis.DCP = function DCP(hook) {
       globalThis.text = state.dcp._pending;
       state.dcp._pending = "";
     }
+
+    var base = (typeof globalThis.text === "string") ? globalThis.text : " ";
+    var profilesCount = Object.keys(S.profiles || {}).length;
+    var widgets = "";
+    widgets += bdWidget("dcp_profiles", {
+      type: "stat",
+      label: "Profiles",
+      value: profilesCount,
+      align: "left",
+      order: 1,
+      color: "#60a5fa"
+    });
+    widgets += bdWidget("dcp_budget", {
+      type: "stat",
+      label: "Budget",
+      value: S.config && S.config.budget ? S.config.budget : 800,
+      align: "right",
+      order: 1,
+      color: "#fbbf24"
+    });
+    widgets += bdWidget("dcp_fallback", {
+      type: "badge",
+      text: "Fallback: " + ((S.config && S.config.fallback) ? S.config.fallback : "personality"),
+      align: "center",
+      order: 1,
+      variant: "subtle",
+      color: "#a78bfa"
+    });
+
+    globalThis.text = base + widgets;
     return;
   }
 };
