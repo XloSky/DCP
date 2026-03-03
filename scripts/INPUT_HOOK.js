@@ -3,10 +3,11 @@ const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
 
-  DCP("input");
+  if (typeof DCP !== "function") return { text };
 
-  var r = { text: globalThis.text || " " };
-  if (globalThis.stop) r.stop = true;
-  return r;
+  var out = DCP("input", text);
+  if (!out || typeof out.text !== "string") out = { text };
+  if (out.stop) globalThis.stop = true;
+  return out;
 };
 modifier(text);
