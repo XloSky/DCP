@@ -1,9 +1,12 @@
 // DCP v4 — Input tab (one-liner, all logic in Library)
 const modifier = (text) => {
-  if (typeof DCP !== "function") return { text };
+  globalThis.text = text;
+  globalThis.stop = false;
 
-  var out = DCP("input", text);
-  if (!out || typeof out.text !== "string") out = { text };
-  return out;
+  DCP("input");
+
+  var r = { text: globalThis.text || " " };
+  if (globalThis.stop) r.stop = true;
+  return r;
 };
 modifier(text);
