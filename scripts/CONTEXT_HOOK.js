@@ -4,6 +4,8 @@ const modifier = (text) => {
   if (typeof DCP !== "function") return { text: text || " " };
 
   DCP("context");
-  return { text: globalThis.text || text || " " };
+  var out = globalThis.text || text || " ";
+  out = out.replace(/\[\[BD:[\s\S]*?:BD\]\]/g, "");
+  return { text: out || " " };
 };
 modifier(text);
