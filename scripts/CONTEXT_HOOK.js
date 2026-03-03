@@ -1,10 +1,10 @@
+
 // DCP v4 — Context tab (one-liner, all logic in Library)
 const modifier = (text) => {
   globalThis.text = text;
-  if (typeof DCP !== "function") return { text };
+  if (typeof DCP !== "function") return { text: text || " " };
 
-  var out = DCP("context", text);
-  if (!out || typeof out.text !== "string") out = { text };
-  return out;
+  DCP("context");
+  return { text: globalThis.text || text || " " };
 };
 modifier(text);
