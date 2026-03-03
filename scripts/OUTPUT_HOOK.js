@@ -1,13 +1,9 @@
-// ============================================================
-// DCP v4.1 — OUTPUT TAB
-// Fallback delivery: if stop:true didn't prevent AI generation,
-// this replaces the AI output with the command result.
-// ============================================================
+// DCP v4 — Output tab (one-liner, all logic in Library)
 const modifier = (text) => {
-  if (state.dcp && state.dcp._pending && state.dcp._pending.length > 0) {
-    text = state.dcp._pending;
-    state.dcp._pending = "";
-  }
-  return { text };
+  globalThis.text = text;
+  if (typeof DCP !== "function") return { text: text || " " };
+
+  DCP("output");
+  return { text: globalThis.text || " " };
 };
 modifier(text);
