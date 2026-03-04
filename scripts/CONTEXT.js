@@ -5,7 +5,6 @@ const modifier = (text) => {
 
   DCP("context");
   var out = globalThis.text || text || " ";
-  out = out.replace(/\[\[BD:[\s\S]*?:BD\]\]/g, "");
   return { text: out || " " };
 };
 modifier(text);
