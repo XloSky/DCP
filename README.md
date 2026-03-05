@@ -32,7 +32,7 @@ AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper char
 3. Context tab: call `DCP("context")`
 4. Output tab: call `DCP("output")`
 
-### Hook one-liners
+### Hooks
 
 ```js
 // DCP v4 — Input tab (one-liner, all logic in Library)
