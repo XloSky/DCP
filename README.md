@@ -35,20 +35,42 @@ AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper char
 ### Hook one-liners
 
 ```js
-// Input tab
-const modifier = (text) => { DCP("input"); return { text: globalThis.text }; };
+// DCP v4 — Input tab (one-liner, all logic in Library)
+const modifier = (text) => {
+  globalThis.text = text;
+  globalThis.stop = false;
+
+  if (typeof DCP !== "function") return { text: text || " " };
+
+  DCP("input");
+
+  return { text: globalThis.text || " " };
+};
 modifier(text);
 ```
 
 ```js
-// Context tab
-const modifier = (text) => { DCP("context"); return { text: globalThis.text }; };
+// DCP v4 — Context tab (one-liner, all logic in Library)
+const modifier = (text) => {
+  globalThis.text = text;
+  if (typeof DCP !== "function") return { text: text || " " };
+
+  DCP("context");
+  var out = globalThis.text || text || " ";
+  return { text: out || " " };
+};
 modifier(text);
 ```
 
 ```js
-// Output tab
-const modifier = (text) => { DCP("output"); return { text: globalThis.text }; };
+// DCP v4 — Output tab (one-liner, all logic in Library)
+const modifier = (text) => {
+  globalThis.text = text;
+  if (typeof DCP !== "function") return { text: text || " " };
+
+  DCP("output");
+  return { text: globalThis.text || " " };
+};
 modifier(text);
 ```
 
