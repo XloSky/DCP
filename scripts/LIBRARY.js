@@ -1,15 +1,11 @@
 // ============================================================
-// DCP v4.0 — LIBRARY (all logic lives here)
+// DCP v4.1 — LIBRARY (all logic lives here)
 //
-// Library-Centric Hook Pattern: this single function handles
-// input commands, context injection, and output delivery.
-// The Input/Context/Output tabs are one-liners that call DCP().
-//
-// SETUP:
-//   Library tab  → this file
-//   Input tab    → INPUT_HOOK.js
-//   Output tab   → OUTPUT_HOOK.js
-//   Context tab  → CONTEXT_HOOK.js
+// Fixes in v4.1:
+// - Correct command-stop behavior (uses globalThis.stop = true)
+// - Safe export/import payload encoding (base64 for section content)
+// - Graceful context injection when maxChars is tight (partial fit)
+// - Case-insensitive profile/action/section handling
 // ============================================================
 
 globalThis.DCP = function DCP(hook) {
@@ -19,10 +15,18 @@ globalThis.DCP = function DCP(hook) {
   if (!state.dcp) {
     state.dcp = {
       profiles: {},
-      config: { budget: 800, fallback: "personality", debug: false }
+      config: { budget: 800, fallback: "personality", debug: false, sectionKeywords: {}, widgets: false, maxActive: 0 }
     };
   }
   var S = state.dcp;
+  S.config = S.config || {};
+  S.config.budget = (typeof S.config.budget === "number" ? S.config.budget : 800);
+  S.config.fallback = (S.config.fallback || "personality").toLowerCase();
+  S.config.debug = !!S.config.debug;
+  S.config.sectionKeywords = S.config.sectionKeywords || {};
+  S.config.widgets = !!S.config.widgets;
+  S.config.maxActive = parseInt(S.config.maxActive, 10);
+  if (isNaN(S.config.maxActive) || S.config.maxActive < 0) S.config.maxActive = 0;
 
   var SECTIONS = [
     "appearance", "personality", "history", "abilities", "quirks",
@@ -55,7 +59,10 @@ globalThis.DCP = function DCP(hook) {
     return total;
   }
 
-  // Splits keyword string by commas if present, otherwise by spaces
+  function normalizeName(name) {
+    return (name || "").trim().toLowerCase();
+  }
+
   function parseKeywords(str) {
     var arr = [];
     var parts = (str.indexOf(",") !== -1) ? str.split(",") : str.split(" ");
@@ -66,18 +73,132 @@ globalThis.DCP = function DCP(hook) {
     return arr;
   }
 
+  function toBase64(s) {
+    if (!s) return "";
+    // Browser-safe UTF-8 -> base64
+    return btoa(unescape(encodeURIComponent(String(s))));
+  }
+
+  function fromBase64(s) {
+    if (!s) return "";
+    try {
+      return decodeURIComponent(escape(atob(String(s))));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function defaultSectionKeywords() {
+    return {
+      appearance: ["appearance","look","looks","looked","describe","description","features","face","eyes","hair","body","height","build","clothing","clothes","outfit","wearing","uniform","armor"],
+      personality: ["personality","temperament","attitude","demeanor","mood","emotion","feeling","feel","feels","calm","angry","nervous","confident","shy","kind","cruel","friendly","polite","rude","humor"],
+      history: ["history","backstory","background","past","origin","grew up","childhood","before","previously","once","years ago","remember","memory","memories","former","used to"],
+      abilities: ["abilities","ability","power","powers","skills","skill","talent","talents","strength","weakness","fight","combat","attack","defend","magic","spell","weapon","tactics","capable","can"],
+      quirks: ["quirk","quirks","habit","habits","odd","peculiar","strange","unusual","tick","tics","obsession","fear","phobia","favorite","routine","compulsion"],
+      relationships: ["relationship","relationships","friend","friends","enemy","enemies","rival","ally","partner","family","parent","sibling","mentor","student","bond","trust","loyal","romance"],
+      speech: ["speech","voice","tone","accent","says","said","speak","speaks","speaking","whisper","shout","dialogue","phrase","phrasing","word choice"],
+      mannerisms: ["mannerism","mannerisms","gesture","gestures","posture","movement","moves","walk","walks","stance","fidget","nod","shrug","glance","expression","body language"],
+      species: ["species","race","lineage","ancestry","biology","anatomy","physiology","human","humanoid","creature","beast","monster","nonhuman","instinct","traits"],
+      other: ["other","misc","miscellaneous","notes","detail","details","extra","additional","general","context"]
+    };
+  }
+
+  function getSectionKeywords() {
+    var base = defaultSectionKeywords();
+    var overrides = S.config.sectionKeywords || {};
+    for (var sec in overrides) {
+      if (!overrides.hasOwnProperty(sec)) continue;
+      if (SECTIONS.indexOf(sec) === -1) continue;
+      var custom = overrides[sec];
+      if (!custom || !custom.length) continue;
+      if (!base[sec]) base[sec] = [];
+      for (var i = 0; i < custom.length; i++) {
+        var w = (custom[i] || "").toLowerCase().trim();
+        if (w && base[sec].indexOf(w) === -1) base[sec].push(w);
+      }
+    }
+    return base;
+  }
+
+  function stripBDTags(str) {
+    return String(str || "").replace(/\[\[BD:[\s\S]*?:BD\]\]/g, "");
+  }
+
+  function bdMessage(payload) {
+    return "[[BD:" + JSON.stringify(payload) + ":BD]]";
+  }
+
+  function bdWidget(id, config) {
+    return bdMessage({ type: "widget", widgetId: id, action: "create", config: config });
+  }
+
+  var DCP_WIDGET_IDS = ["dcp_active", "dcp_budget", "dcp_focus"];
+
+  function bdDestroy(id) {
+    return bdMessage({ type: "widget", widgetId: id, action: "destroy" });
+  }
+
+  function destroyDebugWidgets() {
+    var out = "";
+    for (var i = 0; i < DCP_WIDGET_IDS.length; i++) {
+      out += bdDestroy(DCP_WIDGET_IDS[i]);
+    }
+    return out;
+  }
+
+  function buildDebugWidgets() {
+    if (!S.config.widgets || !S.config.debug) return "";
+    var snap = state.dcpRuntime || {};
+    var widgets = "";
+
+    widgets += bdWidget("dcp_active", {
+      type: "stat",
+      label: "Active",
+      value: snap.activeCount || 0,
+      align: "left",
+      order: 1,
+      color: "#22c55e"
+    });
+
+    var injectCap = (snap.activeCount || 0) * (S.config.budget || 0);
+
+    widgets += bdWidget("dcp_budget", {
+      type: "stat",
+      label: "Inject",
+      value: String(snap.used || 0) + "/" + String(injectCap),
+      align: "right",
+      order: 1,
+      color: "#60a5fa"
+    });
+
+    if (snap.top && snap.top.length) {
+      widgets += bdWidget("dcp_focus", {
+        type: "badge",
+        text: "Focus: " + snap.top.join(", "),
+        variant: "subtle",
+        align: "center",
+        order: 1,
+        color: "#f59e0b"
+      });
+    }
+
+    return widgets;
+  }
+
   // ================================================================
   //  INPUT — command parsing
   //  Supports ;; as batch separator and /profile import for bulk entry
-  //  Handles commands without using stop:true (avoids runtime stop errors)
   // ================================================================
   if (hook === "input") {
     var raw = (globalThis.text || "").trim();
 
-    // Fast path: if no /profile anywhere, skip entirely
+    // Safety: clear stale pending fallback on normal (non-command) turns.
+    // This prevents old command text from leaking into a later output.
+    if (S._pending && raw.indexOf("/profile") !== 0) {
+      S._pending = "";
+    }
     if (raw.indexOf("/profile") === -1) return;
 
-    // Split on ;; for batch commands
     var parts = raw.split(";;");
     var results = [];
     var hasCommand = false;
@@ -105,8 +226,12 @@ globalThis.DCP = function DCP(hook) {
           "/profile append <name> <section> <text>\n" +
           "/profile keywords <name> <word1,word2,...>\n" +
           "/profile import <name> [section] text...\n" +
+          "/profile importb64 <name> [section] <base64>...\n" +
+          "/profile importallb64 [merge|replace] <base64>\n" +
           "/profile export <name>\n" +
-          "/profile config [budget|fallback|debug] [value]\n" +
+          "/profile exportb64 <name>\n" +
+          "/profile exportallb64\n" +
+          "/profile config [budget|fallback|debug|maxActive|keywords|widgets] [value]\n" +
           "/profile sections\n" +
           "Batch: separate commands with ;;"
         );
@@ -132,16 +257,17 @@ globalThis.DCP = function DCP(hook) {
 
       // --- ADD ---
       else if (action === "add") {
-        var name = rest.split(" ")[0];
+        var nameRaw = rest.split(" ")[0];
+        var name = normalizeName(nameRaw);
         if (!name) { results.push("Usage: /profile add <name>"); continue; }
         if (S.profiles[name]) { results.push(name + " already exists."); continue; }
-        S.profiles[name] = { keywords: [name.toLowerCase()], sections: {} };
+        S.profiles[name] = { keywords: [name], sections: {} };
         results.push("Created " + name + ".");
       }
 
       // --- REMOVE ---
       else if (action === "remove" || action === "delete") {
-        var name = rest.split(" ")[0];
+        var name = normalizeName(rest.split(" ")[0]);
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
         delete S.profiles[name];
         results.push("Removed " + name + ".");
@@ -149,7 +275,7 @@ globalThis.DCP = function DCP(hook) {
 
       // --- SHOW ---
       else if (action === "show") {
-        var name = rest.split(" ")[0];
+        var name = normalizeName(rest.split(" ")[0]);
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
         var prof = S.profiles[name];
         var lines = ["= " + name + " =", "Keywords: " + prof.keywords.join(", ")];
@@ -169,7 +295,7 @@ globalThis.DCP = function DCP(hook) {
       else if (action === "set") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) { results.push("Usage: /profile set <name> <section> <text>"); continue; }
-        var name = rest.substring(0, sp1);
+        var name = normalizeName(rest.substring(0, sp1));
         var after = rest.substring(sp1 + 1).trim();
         var sp2 = after.indexOf(" ");
         if (sp2 === -1) { results.push("Usage: /profile set <name> <section> <text>"); continue; }
@@ -185,7 +311,7 @@ globalThis.DCP = function DCP(hook) {
       else if (action === "append") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) { results.push("Usage: /profile append <name> <section> <text>"); continue; }
-        var name = rest.substring(0, sp1);
+        var name = normalizeName(rest.substring(0, sp1));
         var after = rest.substring(sp1 + 1).trim();
         var sp2 = after.indexOf(" ");
         if (sp2 === -1) { results.push("Usage: /profile append <name> <section> <text>"); continue; }
@@ -194,6 +320,7 @@ globalThis.DCP = function DCP(hook) {
         if (!S.profiles[name]) { results.push("Not found: " + name); continue; }
         if (SECTIONS.indexOf(section) === -1) { results.push("Bad section: " + section); continue; }
         S.profiles[name].sections[section] = (S.profiles[name].sections[section] || "") + " " + val;
+        S.profiles[name].sections[section] = S.profiles[name].sections[section].trim();
         results.push(name + "." + section + " appended (" + S.profiles[name].sections[section].length + " chars)");
       }
 
@@ -201,34 +328,29 @@ globalThis.DCP = function DCP(hook) {
       else if (action === "keywords") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) {
-          var name = rest;
-          if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
-          results.push("Keywords for " + name + ": " + S.profiles[name].keywords.join(", "));
+          var nameOnly = normalizeName(rest);
+          if (!nameOnly || !S.profiles[nameOnly]) { results.push("Not found: " + (nameOnly || "?")); continue; }
+          results.push("Keywords for " + nameOnly + ": " + S.profiles[nameOnly].keywords.join(", "));
           continue;
         }
-        var name = rest.substring(0, sp1);
+        var name = normalizeName(rest.substring(0, sp1));
         var kwStr = rest.substring(sp1 + 1).trim();
         if (!S.profiles[name]) { results.push("Not found: " + name); continue; }
         S.profiles[name].keywords = parseKeywords(kwStr);
         results.push("Keywords for " + name + ": " + S.profiles[name].keywords.join(", "));
       }
 
-      // --- IMPORT (bulk set all sections in one command) ---
+      // --- IMPORT (plain text tagged sections) ---
       else if (action === "import") {
         var sp1 = rest.indexOf(" ");
         if (sp1 === -1) {
           results.push("Usage: /profile import <name> [section] text [section] text...");
           continue;
         }
-        var name = rest.substring(0, sp1);
+        var name = normalizeName(rest.substring(0, sp1));
         var body = rest.substring(sp1 + 1).trim();
+        if (!S.profiles[name]) S.profiles[name] = { keywords: [name], sections: {} };
 
-        // Auto-create profile if it doesn't exist
-        if (!S.profiles[name]) {
-          S.profiles[name] = { keywords: [name.toLowerCase()], sections: {} };
-        }
-
-        // Parse [tag] markers: [keywords], [appearance], [personality], etc.
         var count = 0;
         var currentKey = null;
         var sectionStart = -1;
@@ -239,10 +361,9 @@ globalThis.DCP = function DCP(hook) {
           if (ob === -1) break;
           var cb = body.indexOf("]", ob);
           if (cb === -1) break;
-
           var tag = body.substring(ob + 1, cb).toLowerCase().trim();
+
           if (tag === "keywords" || SECTIONS.indexOf(tag) !== -1) {
-            // Save previous section
             if (currentKey !== null && sectionStart >= 0) {
               var content = body.substring(sectionStart, ob).trim();
               if (content) {
@@ -261,14 +382,14 @@ globalThis.DCP = function DCP(hook) {
             pos = cb + 1;
           }
         }
-        // Save last section
+
         if (currentKey !== null && sectionStart >= 0 && sectionStart <= body.length) {
-          var content = body.substring(sectionStart).trim();
-          if (content) {
+          var lastContent = body.substring(sectionStart).trim();
+          if (lastContent) {
             if (currentKey === "keywords") {
-              S.profiles[name].keywords = parseKeywords(content);
+              S.profiles[name].keywords = parseKeywords(lastContent);
             } else {
-              S.profiles[name].sections[currentKey] = content;
+              S.profiles[name].sections[currentKey] = lastContent;
               count++;
             }
           }
@@ -277,29 +398,174 @@ globalThis.DCP = function DCP(hook) {
         results.push("Imported " + count + " sections for " + name + " (" + profileSize(S.profiles[name]) + " chars)");
       }
 
-      // --- EXPORT (outputs re-importable command) ---
+      // --- IMPORTB64 (safe round-trip for arbitrary section text) ---
+      else if (action === "importb64") {
+        var sp1 = rest.indexOf(" ");
+        if (sp1 === -1) {
+          results.push("Usage: /profile importb64 <name> [section] <base64>...");
+          continue;
+        }
+        var name = normalizeName(rest.substring(0, sp1));
+        var body = rest.substring(sp1 + 1).trim();
+        if (!S.profiles[name]) S.profiles[name] = { keywords: [name], sections: {} };
+
+        var match;
+        var re = /\[([a-zA-Z]+)\]\s*([A-Za-z0-9+/=]+)/g;
+        var imported = 0;
+        while ((match = re.exec(body)) !== null) {
+          var tag = match[1].toLowerCase();
+          var b64 = match[2];
+          if (tag !== "keywords" && SECTIONS.indexOf(tag) === -1) continue;
+
+          var decoded = fromBase64(b64);
+          if (decoded === null) {
+            results.push("Invalid base64 for [" + tag + "]");
+            continue;
+          }
+
+          if (tag === "keywords") {
+            S.profiles[name].keywords = parseKeywords(decoded);
+          } else {
+            S.profiles[name].sections[tag] = decoded;
+            imported++;
+          }
+        }
+        results.push("Imported " + imported + " sections (b64) for " + name + " (" + profileSize(S.profiles[name]) + " chars)");
+      }
+
+      // --- IMPORTALLB64 (bulk transfer) ---
+      else if (action === "importallb64") {
+        var mode = "merge";
+        var payloadB64 = (rest || "").trim();
+        var firstSpace = payloadB64.indexOf(" ");
+        if (firstSpace !== -1) {
+          var modeMaybe = payloadB64.substring(0, firstSpace).toLowerCase();
+          if (modeMaybe === "merge" || modeMaybe === "replace") {
+            mode = modeMaybe;
+            payloadB64 = payloadB64.substring(firstSpace + 1).trim();
+          }
+        }
+        if (!payloadB64) {
+          results.push("Usage: /profile importallb64 [merge|replace] <base64>");
+          continue;
+        }
+
+        var decodedAll = fromBase64(payloadB64);
+        if (decodedAll === null) {
+          results.push("Invalid base64 payload.");
+          continue;
+        }
+
+        var parsedAll = null;
+        try {
+          parsedAll = JSON.parse(decodedAll);
+        } catch (e) {
+          results.push("Invalid payload JSON.");
+          continue;
+        }
+
+        var sourceProfiles = parsedAll && (parsedAll.p || parsedAll.profiles);
+        if (!sourceProfiles || typeof sourceProfiles !== "object") {
+          results.push("Payload missing profiles.");
+          continue;
+        }
+
+        if (mode === "replace") S.profiles = {};
+
+        var created = 0;
+        var updated = 0;
+        var skipped = 0;
+
+        for (var rawName in sourceProfiles) {
+          if (!sourceProfiles.hasOwnProperty(rawName)) continue;
+          var normName = normalizeName(rawName);
+          if (!normName) { skipped++; continue; }
+
+          var srcProf = sourceProfiles[rawName] || {};
+          var srcSections = srcProf.sections || {};
+
+          var cleanSections = {};
+          for (var si = 0; si < SECTIONS.length; si++) {
+            var secName = SECTIONS[si];
+            var secVal = srcSections[secName];
+            if (typeof secVal === "string" && secVal.trim().length) {
+              cleanSections[secName] = secVal;
+            }
+          }
+
+          var cleanKeywords = [];
+          if (srcProf.keywords && srcProf.keywords.length) {
+            for (var ki = 0; ki < srcProf.keywords.length; ki++) {
+              var kwItem = String(srcProf.keywords[ki] || "").trim().toLowerCase();
+              if (kwItem && cleanKeywords.indexOf(kwItem) === -1) cleanKeywords.push(kwItem);
+            }
+          }
+          if (cleanKeywords.length === 0) cleanKeywords.push(normName);
+
+          if (S.profiles[normName]) updated++; else created++;
+          S.profiles[normName] = { keywords: cleanKeywords, sections: cleanSections };
+        }
+
+        results.push(
+          "Imported all profiles (" + mode + "): created=" + created +
+          ", updated=" + updated +
+          ", skipped=" + skipped +
+          ", total=" + (created + updated)
+        );
+      }
+
+      // --- EXPORT (plain, human-readable) ---
       else if (action === "export") {
-        var name = rest.split(" ")[0];
+        var name = normalizeName(rest.split(" ")[0]);
         if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
         var prof = S.profiles[name];
         var out = "/profile import " + name + " [keywords] " + prof.keywords.join(",");
         for (var s = 0; s < SECTIONS.length; s++) {
           var sec = SECTIONS[s];
-          if (prof.sections[sec]) {
-            out += " [" + sec + "] " + prof.sections[sec];
-          }
+          if (prof.sections[sec]) out += " [" + sec + "] " + prof.sections[sec];
         }
+        out += "\nTip: use /profile exportb64 for guaranteed round-trip safety.";
         results.push(out);
+      }
+
+      // --- EXPORTB64 (safe, re-importable) ---
+      else if (action === "exportb64") {
+        var name = normalizeName(rest.split(" ")[0]);
+        if (!name || !S.profiles[name]) { results.push("Not found: " + (name || "?")); continue; }
+        var prof = S.profiles[name];
+        var outB64 = "/profile importb64 " + name + " [keywords] " + toBase64(prof.keywords.join(","));
+        for (var s = 0; s < SECTIONS.length; s++) {
+          var sec = SECTIONS[s];
+          if (prof.sections[sec]) outB64 += " [" + sec + "] " + toBase64(prof.sections[sec]);
+        }
+        results.push(outB64);
+      }
+
+      // --- EXPORTALLB64 (compact bulk export) ---
+      else if (action === "exportallb64") {
+        var countProfiles = 0;
+        for (var pn in S.profiles) {
+          if (S.profiles.hasOwnProperty(pn)) countProfiles++;
+        }
+        var payloadAll = { v: 1, p: S.profiles };
+        var outAll = "/profile importallb64 " + toBase64(JSON.stringify(payloadAll));
+        results.push("Profiles exported: " + countProfiles + "\n" + outAll);
       }
 
       // --- CONFIG ---
       else if (action === "config") {
         if (!rest) {
-          results.push("Config: budget=" + S.config.budget + " | fallback=" + S.config.fallback + " | debug=" + (S.config.debug ? "on" : "off"));
+          var overrideCount = 0;
+          for (var sk in S.config.sectionKeywords) {
+            if (S.config.sectionKeywords.hasOwnProperty(sk) && S.config.sectionKeywords[sk] && S.config.sectionKeywords[sk].length) {
+              overrideCount++;
+            }
+          }
+          results.push("Config: budget=" + S.config.budget + " | fallback=" + S.config.fallback + " | debug=" + (S.config.debug ? "on" : "off") + " | maxActive=" + S.config.maxActive + " | widgets=" + (S.config.widgets ? "on" : "off") + " | keywordOverrides=" + overrideCount);
           continue;
         }
         var cfgParts = rest.split(" ");
-        var key = cfgParts[0];
+        var key = (cfgParts[0] || "").toLowerCase();
         var val = cfgParts.slice(1).join(" ");
 
         if (key === "budget") {
@@ -308,14 +574,73 @@ globalThis.DCP = function DCP(hook) {
           S.config.budget = num;
           results.push("Budget: " + num);
         } else if (key === "fallback") {
-          if (SECTIONS.indexOf(val) === -1) { results.push("Bad section: " + val); continue; }
-          S.config.fallback = val;
-          results.push("Fallback: " + val);
+          var fallback = (val || "").toLowerCase();
+          if (SECTIONS.indexOf(fallback) === -1) { results.push("Bad section: " + val); continue; }
+          S.config.fallback = fallback;
+          results.push("Fallback: " + fallback);
         } else if (key === "debug") {
-          S.config.debug = (val === "true" || val === "on" || val === "1");
+          var v = (val || "").toLowerCase();
+          var debugOn = (v === "true" || v === "on" || v === "1");
+          if (!debugOn) S._widgetClearPending = true;
+          S.config.debug = debugOn;
           results.push("Debug: " + (S.config.debug ? "on" : "off"));
+        } else if (key === "maxactive") {
+          var ma = parseInt(val, 10);
+          if (isNaN(ma) || ma < 0) {
+            results.push("maxActive must be >= 0 (0 = no cap)");
+            continue;
+          }
+          S.config.maxActive = ma;
+          results.push("maxActive: " + ma + (ma === 0 ? " (no cap)" : ""));
+        } else if (key === "keywords") {
+          var sectionAndWords = (val || "").trim();
+          if (!sectionAndWords) {
+            results.push("Usage: /profile config keywords <section> <word1,word2,...> | clear");
+            continue;
+          }
+          var spk = sectionAndWords.indexOf(" ");
+          var secName = (spk === -1 ? sectionAndWords : sectionAndWords.substring(0, spk)).toLowerCase();
+          var wordsRaw = (spk === -1 ? "" : sectionAndWords.substring(spk + 1).trim());
+          if (SECTIONS.indexOf(secName) === -1) {
+            results.push("Bad section: " + secName + ". Use /profile sections");
+            continue;
+          }
+          if (!wordsRaw) {
+            var current = S.config.sectionKeywords[secName] || [];
+            results.push("Keyword override for " + secName + ": " + (current.length ? current.join(", ") : "(none)"));
+            continue;
+          }
+          var cmd = wordsRaw.toLowerCase();
+          if (cmd === "clear" || cmd === "reset" || cmd === "off") {
+            delete S.config.sectionKeywords[secName];
+            results.push("Cleared keyword override for " + secName);
+            continue;
+          }
+          var parsed = parseKeywords(wordsRaw);
+          if (!parsed.length) {
+            results.push("No keywords provided.");
+            continue;
+          }
+          S.config.sectionKeywords[secName] = parsed;
+          results.push("Keyword override for " + secName + ": " + parsed.join(", "));
+        } else if (key === "widgets") {
+          if (!val) {
+            results.push("Widgets: " + (S.config.widgets ? "on" : "off"));
+            continue;
+          }
+          var wv = val.toLowerCase();
+          if (wv === "on" || wv === "true" || wv === "1") {
+            S.config.widgets = true;
+            results.push("Widgets: on (requires BetterDungeon; keep off for mobile/shared users)");
+          } else if (wv === "off" || wv === "false" || wv === "0") {
+            S.config.widgets = false;
+            S._widgetClearPending = true;
+            results.push("Widgets: off");
+          } else {
+            results.push("Usage: /profile config widgets <on|off>");
+          }
         } else {
-          results.push("Config keys: budget, fallback, debug");
+          results.push("Config keys: budget, fallback, debug, maxActive, keywords, widgets");
         }
       }
 
@@ -325,24 +650,25 @@ globalThis.DCP = function DCP(hook) {
       }
     }
 
-    // Deliver results and stop the game loop (no AI generation)
+    // Deliver command results and stop model call for this turn.
     if (hasCommand) {
       var msg = results.join("\n---\n");
       state.message = msg;
       state.dcp._pending = msg;
       globalThis.text = " ";
-      globalThis.stop = false;
+      globalThis.stop = true;
     }
     return;
   }
 
   // ================================================================
   //  CONTEXT — dynamic character injection
-  //  Scans recent history for active characters, scores categories,
-  //  and injects the most relevant sections into AI context
+  //  Gracefully fits as much as possible under maxChars
   // ================================================================
   if (hook === "context") {
-    var text = globalThis.text || "";
+    var text = stripBDTags(globalThis.text || "");
+    globalThis.text = text;
+    state.dcpRuntime = { activeCount: 0, activeNames: [], top: [], used: 0 };
     var profiles = S.profiles;
     var pkeys = [];
     for (var k in profiles) {
@@ -350,48 +676,47 @@ globalThis.DCP = function DCP(hook) {
     }
     if (pkeys.length === 0) return;
 
-    // Gather recent history
     var hist = (typeof history !== "undefined") ? history : [];
     var lookback = Math.min(6, hist.length);
     var recentText = "";
     for (var h = hist.length - lookback; h < hist.length; h++) {
       if (hist[h] && hist[h].text) recentText += " " + hist[h].text;
     }
-    recentText = recentText.toLowerCase();
+    recentText = stripBDTags(recentText).toLowerCase();
     var textLower = text.toLowerCase();
 
-    // Category keywords for scene analysis
-    var KEYWORDS = {
-      appearance: ["look","looks","beautiful","pretty","handsome","eyes","hair","face","skin","body","tall","short","wearing","outfit","clothes","dress","armor","appearance","describe"],
-      personality: ["feel","feels","feeling","emotion","mood","happy","sad","angry","nervous","excited","calm","shy","confident","afraid","love","hate","trust","kind","cruel","gentle","friendly","laugh","cry","smile","frown","blush"],
-      history: ["remember","past","before","ago","childhood","origin","born","parents","family","backstory","history","memories","forgot","experience","trauma","once","years"],
-      abilities: ["fight","attack","defend","dodge","sword","weapon","magic","spell","power","ability","skill","punch","kick","slash","shoot","strength","speed","combat","battle","web","swing","climb","venom","poison","shield","heal"],
-      quirks: ["habit","always","never","obsess","phobia","fear","weird","strange","unusual","favorite","tendency","hobby","interest"],
-      relationships: ["friend","enemy","rival","ally","partner","lover","brother","sister","mother","father","master","mentor","together","relationship","bond","loyal","devoted"],
-      speech: ["say","says","said","tell","told","ask","reply","shout","whisper","murmur","voice","tone","accent","speak","spoke","yell","scream"],
-      mannerisms: ["walk","move","sit","stand","lean","gesture","nod","shake","wave","bow","fidget","pace","approach","enter","leave","turn","step"],
-      species: ["species","monster","creature","beast","tail","wings","claws","fangs","scales","fur","horns","legs","limbs","human","inhuman","lamia","arachne","centaur","harpy","vampire","dragon","demon","anatomy","nature","instinct","spider","silk","web","thread","threads","spinnerets"]
-    };
+    var KEYWORDS = getSectionKeywords();
 
-    // Find active characters (mentioned in recent context)
-    var active = [];
+    var matched = [];
     for (var n = 0; n < pkeys.length; n++) {
       var charName = pkeys[n];
       var prof = profiles[charName];
       if (!prof || !prof.keywords) continue;
-      var found = false;
+      var hit = 0;
       for (var kw = 0; kw < prof.keywords.length; kw++) {
         var keyword = prof.keywords[kw].toLowerCase();
-        if (containsWord(recentText, keyword) || containsWord(textLower, keyword)) {
-          found = true;
-          break;
-        }
+        if (containsWord(recentText, keyword)) hit += 1;
+        if (containsWord(textLower, keyword)) hit += 2;
       }
-      if (found) active.push(charName);
+      if (hit > 0) matched.push({ name: charName, hit: hit });
     }
+
+    matched.sort(function(a, b) {
+      if (b.hit !== a.hit) return b.hit - a.hit;
+      return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+    });
+
+    var active = [];
+    var maxActive = S.config.maxActive;
+    for (var m = 0; m < matched.length; m++) {
+      if (maxActive > 0 && active.length >= maxActive) break;
+      active.push(matched[m].name);
+    }
+
+    state.dcpRuntime.activeCount = active.length;
+    state.dcpRuntime.activeNames = active.slice(0, 5);
     if (active.length === 0) return;
 
-    // Score categories by keyword frequency
     var scores = {};
     for (var cat in KEYWORDS) {
       if (!KEYWORDS.hasOwnProperty(cat)) continue;
@@ -404,32 +729,33 @@ globalThis.DCP = function DCP(hook) {
       scores[cat] = score;
     }
 
-    // Rank categories descending
     var ranked = [];
-    for (var cat in scores) {
-      if (scores.hasOwnProperty(cat)) ranked.push({ cat: cat, score: scores[cat] });
+    for (var c in scores) {
+      if (scores.hasOwnProperty(c)) ranked.push({ cat: c, score: scores[c] });
     }
     ranked.sort(function(a, b) { return b.score - a.score; });
 
-    // Build injection per active character
+    state.dcpRuntime.top = ranked.slice(0, 3).map(function(x) { return x.cat + ":" + x.score; });
+    state.dcpRuntime.used = 0;
+
     var budget = S.config.budget;
     var fallback = S.config.fallback;
-    var injections = [];
+    var chunks = [];
 
     for (var i = 0; i < active.length; i++) {
-      var charName = active[i];
-      var prof = profiles[charName];
-      if (!prof || !prof.sections) continue;
+      var name = active[i];
+      var pObj = profiles[name];
+      if (!pObj || !pObj.sections) continue;
 
       var charParts = [];
       var used = 0;
-      var header = "[ " + charName + " ]";
+      var header = "[ " + name + " ]";
       used += header.length + 2;
 
       for (var r = 0; r < ranked.length; r++) {
         if (used >= budget) break;
         var sec = ranked[r].cat;
-        var content = prof.sections[sec];
+        var content = pObj.sections[sec];
         if (!content || content.length === 0) continue;
 
         var label = sec + ": ";
@@ -449,9 +775,8 @@ globalThis.DCP = function DCP(hook) {
         }
       }
 
-      // Fallback: always inject at least one section
-      if (charParts.length === 0 && prof.sections[fallback]) {
-        var fb = prof.sections[fallback];
+      if (charParts.length === 0 && pObj.sections[fallback]) {
+        var fb = pObj.sections[fallback];
         var maxFb = budget - header.length - fallback.length - 4;
         if (maxFb > 20) {
           var tr = fb.length > maxFb ? fb.substring(0, maxFb) : fb;
@@ -460,29 +785,57 @@ globalThis.DCP = function DCP(hook) {
       }
 
       if (charParts.length > 0) {
-        injections.push(header + "\n" + charParts.join("\n"));
+        chunks.push(header + "\n" + charParts.join("\n"));
       }
     }
 
-    // Insert injection block into context
-    if (injections.length > 0) {
-      var block = "\n[Character Detail]\n" + injections.join("\n\n") + "\n[/Character Detail]\n";
+    if (chunks.length > 0) {
       var maxChars = (typeof info !== "undefined" && info.maxChars) ? info.maxChars : 8000;
+      var openTag = "\n[Character Detail]\n";
+      var closeTag = "\n[/Character Detail]\n";
+      var room = maxChars - text.length - openTag.length - closeTag.length;
 
-      if (text.length + block.length < maxChars) {
-        var lastNl = text.lastIndexOf("\n");
-        if (lastNl > 0) {
-          globalThis.text = text.substring(0, lastNl) + block + text.substring(lastNl);
-        } else {
-          globalThis.text = text + block;
+      if (room > 64) {
+        var fitted = [];
+        var usedChars = 0;
+        for (var ci = 0; ci < chunks.length; ci++) {
+          var sep = fitted.length ? "\n\n" : "";
+          var candidate = sep + chunks[ci];
+          if (usedChars + candidate.length <= room) {
+            fitted.push(chunks[ci]);
+            usedChars += candidate.length;
+          } else {
+            // Try partial fit for this chunk.
+            var remain = room - usedChars - sep.length;
+            if (remain > 64) {
+              var partial = chunks[ci].substring(0, remain);
+              var cut = partial.lastIndexOf("\n");
+              if (cut > 32) partial = partial.substring(0, cut);
+              fitted.push(partial + " ...");
+              usedChars = room;
+            }
+            break;
+          }
         }
 
-        if (S.config.debug) {
-          var topCats = [];
-          for (var t = 0; t < Math.min(3, ranked.length); t++) {
-            topCats.push(ranked[t].cat + ":" + ranked[t].score);
+        if (fitted.length > 0) {
+          var block = openTag + fitted.join("\n\n") + closeTag;
+          var lastNl = text.lastIndexOf("\n");
+          if (lastNl > 0) {
+            globalThis.text = text.substring(0, lastNl) + block + text.substring(lastNl);
+          } else {
+            globalThis.text = text + block;
           }
-          state.dcpDebugContext = "Injected " + block.length + " chars for " + active.join(", ") + " | Top: " + topCats.join(", ");
+
+          state.dcpRuntime.used = block.length;
+
+          if (S.config.debug) {
+            var topCats = [];
+            for (var t = 0; t < Math.min(3, ranked.length); t++) {
+              topCats.push(ranked[t].cat + ":" + ranked[t].score);
+            }
+            state.dcpDebugContext = "Injected " + block.length + " chars for " + active.join(", ") + " | Top: " + topCats.join(", ");
+          }
         }
       }
     }
@@ -491,7 +844,6 @@ globalThis.DCP = function DCP(hook) {
 
   // ================================================================
   //  OUTPUT — fallback delivery
-  //  If stop:true didn't prevent AI generation, deliver results here
   // ================================================================
   if (hook === "output") {
     if (state.dcp._pending) {
@@ -499,7 +851,26 @@ globalThis.DCP = function DCP(hook) {
       state.dcp._pending = "";
     }
 
-    globalThis.text = (typeof globalThis.text === "string") ? globalThis.text : " ";
+    var outText = (typeof globalThis.text === "string") ? globalThis.text : " ";
+    outText = stripBDTags(outText);
+    // Repair common model run-on like "floor.Hakari" -> "floor. Hakari"
+    outText = outText.replace(/([.!?]["\)\]]?)([A-Z])/g, "$1 $2");
+
+    if (S._widgetClearPending) {
+      outText += destroyDebugWidgets();
+      S._widgetClearPending = false;
+      S._widgetActive = false;
+    }
+
+    if (S.config.widgets && S.config.debug) {
+      outText += buildDebugWidgets();
+      S._widgetActive = true;
+    } else if (S._widgetActive) {
+      outText += destroyDebugWidgets();
+      S._widgetActive = false;
+    }
+
+    globalThis.text = outText;
     return;
   }
 };
