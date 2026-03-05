@@ -1,177 +1,168 @@
 # Dynamic Character Profiles (DCP)
 
-**A scripting system for AI Dungeon that bypasses the 1,000-character Story Card limit.**
+DCP is an AI Dungeon scripting system that stores large character profiles in persistent script state and injects only the most relevant slices into model context each turn.
 
-Characters get unlimited profile data stored in persistent state. Each turn, the script analyzes the scene and dynamically injects the most contextually relevant slice of character data into the AI's context.
+It is built with the Library-Centric Hook Pattern: all logic is in the Library script, and Input/Context/Output tabs are thin wrappers.
 
----
+## What DCP Solves
 
-## The Problem
+AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper character data in script state and inject it dynamically based on scene context.
 
-AI Dungeon's story cards are limited to 1,000 characters — barely enough for a name and a few traits. Characters lose depth, forget their history, and blend together. Players are forced to choose between shallow profiles or constantly reminding the AI who someone is. DCP aims to:
+## Current Feature Set
 
-- Store unlimited character profile data beyond the 1,000-character story card limit.
-- Dynamically inject only the most relevant character details each turn based on scene analysis.
-- Automatically detect which characters are active in the scene via keyword matching.
-- Score 10 detail categories against recent context so the AI gets the right information at the right time.
-- Reduce context pollution by using a smart character budget instead of dumping everything.
-- Keep characters consistent across long adventures without manual intervention.
-
-## Features
-
-- **Unlimited profile storage** across 10 sections: `appearance`, `personality`, `history`, `abilities`, `quirks`, `relationships`, `speech`, `mannerisms`, `species`, `other`
-- **Contextual scene analysis** — scores categories like abilities, speech, and appearance against recent history
-- **Smart budget system** — injects the highest-scoring sections up to a configurable character limit (default 800)
-- **Multi-character support** — tracks and injects multiple characters simultaneously
-- **Custom keyword triggers** — control when each character's data activates
-- **Word-boundary matching** — prevents false activations from partial word matches
-- **Fallback injection** — always sends at least one section (default: personality) when no category scores
-- **Instant commands** — `stop: true` skips AI generation so commands respond immediately
-- **Bulk import/export** — load an entire character profile in one paste with `/profile import`
-- **Batch commands** — chain multiple commands with `;;` in a single input
-- **Configurable** budget, fallback section, and debug mode
-- **Works alongside existing story cards** — complements rather than replaces
-
----
+- Persistent profile storage in `state.dcp.profiles`
+- 10 sections per profile:
+- `appearance`, `personality`, `history`, `abilities`, `quirks`, `relationships`, `speech`, `mannerisms`, `species`, `other`
+- Keyword-based character activation with word-boundary checks
+- Weighted activation scoring (current input weighted higher than recent history)
+- Optional active-profile cap via `maxActive`
+- Category relevance scoring for section selection
+- Per-character injection budget with truncation/partial-fit logic
+- Fallback section injection when nothing scores (`fallback` config)
+- Batch commands with `;;`
+- Safe base64 import/export (single profile and all profiles)
+- Optional BetterDungeon debug widgets (off by default)
+- Auto cleanup of widget IDs when debug/widgets are turned off
+- Output run-on repair for common punctuation-spacing issues (example: `floor.Hakari` -> `floor. Hakari`)
 
 ## Setup
 
-1. Open your AI Dungeon scenario and go to the script editor.
-2. Paste [`scripts/LIBRARY.js`](scripts/LIBRARY.js) into the **Library** tab.
-3. Paste [`scripts/INPUT_HOOK.js`](scripts/INPUT_HOOK.js) into the **Input** tab.
-4. Paste [`scripts/OUTPUT_HOOK.js`](scripts/OUTPUT_HOOK.js) into the **Output** tab.
-5. Paste [`scripts/CONTEXT_HOOK.js`](scripts/CONTEXT_HOOK.js) into the **Context** tab.
-6. Save and start playing.
+1. Library tab: paste `DCP_v4_1_LIBRARY.js`
+2. Input tab: call `DCP("input")`
+3. Context tab: call `DCP("context")`
+4. Output tab: call `DCP("output")`
 
-> **Note:** DCP uses the [Library-Centric Hook Pattern](https://betterdungeon.wiki/guides/scripts#library-centric-hook-pattern). All logic lives in `LIBRARY.js` — the other three tabs are one-liners that call `DCP("input")`, `DCP("context")`, or `DCP("output")`.
+### Hook one-liners
 
----
-
-## Usage
-
-### Quick Start — Import a Character
-
-The fastest way to set up a character. One command loads everything:
-
-```
-/profile import Nova [keywords] nova,the courier,silver [appearance] Tall and lean with silver hair and mismatched eyes — one gold, one black. A long scar runs from her left temple to her jawline. Wears a patched military coat over a dark bodysuit. [personality] Guarded and blunt. Speaks only when necessary. Fiercely loyal once trust is earned but assumes betrayal by default. Dry humor surfaces in moments of stress. [history] Former military scout who deserted after her unit was sacrificed in a cover-up. Spent three years in hiding before resurfacing as a freelance courier. Still wanted by the state. [abilities] Expert marksman and close-quarters fighter. Can navigate by stars alone. Trained in field medicine — enough to stabilize, not enough to save.
+```js
+// Input tab
+const modifier = (text) => { DCP("input"); return { text: globalThis.text }; };
+modifier(text);
 ```
 
-That's it — one paste creates the profile, sets keywords, and fills every section. No waiting for AI generation between each command.
-
-### Batch Commands
-
-Chain multiple commands with `;;` — all processed instantly in one turn:
-
-```
-/profile add Nova ;; /profile keywords Nova nova,the courier,silver ;; /profile set Nova personality Guarded and blunt.
+```js
+// Context tab
+const modifier = (text) => { DCP("context"); return { text: globalThis.text }; };
+modifier(text);
 ```
 
-### Individual Commands
-
-You can still set sections one at a time:
-
-```
-/profile add Nova
-/profile set Nova appearance Tall and lean with silver hair...
-/profile append Nova abilities Trained in field medicine.
+```js
+// Output tab
+const modifier = (text) => { DCP("output"); return { text: globalThis.text }; };
+modifier(text);
 ```
 
-### Export and Share
+## Profile Name Rules
 
-Export a character as a re-importable command:
+- Profile keys are normalized to lowercase internally.
+- Underscores are safe and recommended for stable keys (example: `hahari_hanazono`).
+- Activation depends on `/profile keywords`, not the key format itself.
 
+## Commands
+
+### Core profile commands
+
+- `/profile add <name>`
+- `/profile remove <name>` (or `/profile delete <name>`)
+- `/profile show <name>`
+- `/profile list`
+- `/profile sections`
+
+### Section editing
+
+- `/profile set <name> <section> <text>`
+- `/profile append <name> <section> <text>`
+- `/profile keywords <name> <word1,word2,...>`
+- `/profile keywords <name>` (view current keywords)
+
+### Import/export
+
+- `/profile import <name> [section] text...`
+- `/profile importb64 <name> [section] <base64>...`
+- `/profile importallb64 [merge|replace] <base64>`
+- `/profile export <name>`
+- `/profile exportb64 <name>`
+- `/profile exportallb64`
+
+Notes:
+- `export/import` (plain) is human-readable but not fully safe for all characters.
+- `exportb64/importb64` and `exportallb64/importallb64` are safe round-trip formats.
+- `importallb64 merge` updates/creates while keeping existing profiles.
+- `importallb64 replace` clears existing profiles first.
+
+### Config
+
+- `/profile config`
+- `/profile config budget <number>`
+- `/profile config fallback <section>`
+- `/profile config debug <on|off|true|false|1|0>`
+- `/profile config maxActive <number>`
+- `/profile config keywords <section> <word1,word2,...>`
+- `/profile config keywords <section>` (view override)
+- `/profile config keywords <section> <clear|reset|off>`
+- `/profile config widgets <on|off|true|false|1|0>`
+
+### Help and batching
+
+- `/profile help`
+- Use `;;` to chain commands in one turn
+
+Example:
+
+```text
+/profile add nova ;; /profile keywords nova nova,the courier ;; /profile set nova personality Guarded and blunt.
 ```
-/profile export Nova
-```
 
-This outputs a `/profile import` command you can save, share, or paste into another adventure.
+## Runtime Behavior
 
-### All Commands
+Each context turn:
 
-| Command | Description |
-|---|---|
-| `/profile add <name>` | Create a new profile |
-| `/profile remove <name>` | Delete a profile |
-| `/profile set <name> <section> <text>` | Set a section's content |
-| `/profile append <name> <section> <text>` | Append to a section |
-| `/profile show <name>` | Display profile summary with character counts |
-| `/profile list` | List all stored profiles with total sizes |
-| `/profile sections` | List all available sections |
-| `/profile keywords <name> <word1,word2>` | Set custom trigger keywords |
-| `/profile import <name> [section] text...` | Bulk import all sections in one command |
-| `/profile export <name>` | Export as a re-importable command |
-| `/profile config` | Show current configuration |
-| `/profile config budget <number>` | Set injection budget per character (default: 800) |
-| `/profile config fallback <section>` | Set fallback section (default: personality) |
-| `/profile config debug true/false` | Toggle debug mode |
-| `/profile help` | Show command list |
+1. DCP scans recent history (last 6 actions) and current context text for profile keywords.
+2. Profiles get weighted hit scores and are sorted by relevance.
+3. `maxActive` cap is applied (`0` means no cap).
+4. Section categories are scored from scene language.
+5. Highest-value sections are injected per active profile up to `budget`.
+6. If needed, content is truncated/partially fit to respect total context room.
+7. If no category fits, `fallback` section is used.
 
-**Tip:** All commands are instant — they use `stop: true` to skip AI generation entirely.
+## Widgets (BetterDungeon)
 
----
+Widgets are optional and disabled by default.
 
-## How It Works
+- Require BetterDungeon extension to render as HUD.
+- Script emits debug widgets only when both are true:
+- `debug = on`
+- `widgets = on`
 
-DCP runs automatically in the background. Each turn:
+Widget IDs used:
+- `dcp_active`
+- `dcp_budget`
+- `dcp_focus`
 
-1. The script scans the last 6 history entries for character keywords.
-2. Active characters are identified by keyword match (with word-boundary checking).
-3. The scene is analyzed — words like "fight", "attack", "sword" score the **abilities** category higher, while "eyes", "hair", "wearing" score **appearance** higher.
-4. The highest-scoring sections are injected into the AI's context up to the budget limit.
-5. If nothing scores, the fallback section (default: personality) is injected instead.
+When toggling widgets/debug off, DCP sends destroy messages for these IDs.
 
-You don't need to do anything during play. Just write your story and DCP handles the rest.
+Notes:
+- If command turns are stopped before output renders, cleanup may apply on the next normal output turn.
+- Both Context and Output hooks strip `[[BD:...:BD]]` tags to prevent model/visible text pollution.
 
-### Category Keywords
+## Tuning Tips
 
-Each category has 15-25 trigger words used for scene analysis:
+- Crowd scenes: lower budget and/or set `maxActive`
+- Example: `/profile config budget 300 ;; /profile config maxActive 3`
+- Duo scenes: raise budget and loosen cap
+- Example: `/profile config budget 800 ;; /profile config maxActive 0`
+- Keep keywords specific to avoid accidental activations.
+- Keep section text dense and actionable.
 
-| Category | Example Keywords |
-|---|---|
-| `appearance` | look, eyes, hair, face, wearing, outfit, beautiful |
-| `personality` | feel, emotion, happy, sad, angry, confident, shy |
-| `history` | remember, past, childhood, origin, family, trauma |
-| `abilities` | fight, attack, magic, power, combat, weapon, heal |
-| `quirks` | habit, obsess, phobia, weird, favorite, hobby |
-| `relationships` | friend, enemy, rival, partner, loyal, devoted |
-| `speech` | say, tell, shout, whisper, voice, tone, accent |
-| `mannerisms` | walk, move, gesture, lean, fidget, pace, bow |
-| `species` | monster, creature, tail, wings, claws, fangs, scales |
+## Limitations
 
----
+- DCP improves consistency but cannot force perfect model compliance.
+- Very large profile sets can still hit platform context/input limits.
+- Plain export/import is less robust than base64 commands for special characters.
 
-## Configuration Tips
+## Recommended Workflow
 
-- **Raise the budget** (`/profile config budget 1200`) if you have fewer characters and want more detail per turn.
-- **Lower the budget** if you have many active characters at once to avoid exceeding context limits.
-- **Set keywords** for nicknames and titles — if other characters call someone "Boss", add "boss" as a keyword.
-- **Use your story card for essentials**, use DCP for deep details. They complement each other.
-- **Shorter, denser sections** perform better than long paragraphs. Focus on traits the AI can act on.
-- **Budget is per-character** — with 3 active characters at 800 each, that's 2400 chars of injection. Adjust accordingly.
-
----
-
-## Architecture
-
-DCP uses the [Library-Centric Hook Pattern](https://betterdungeon.wiki/guides/scripts#library-centric-hook-pattern) recommended by the AI Dungeon scripting community. All logic lives in a single `globalThis.DCP` function defined in the Library tab. The Input, Context, and Output tabs are one-liners that call this function.
-
-| Tab | File | Contents |
-|---|---|---|
-| Library | `LIBRARY.js` | All logic: command parsing, context injection, output delivery |
-| Input | `INPUT_HOOK.js` | `DCP("input")` — one-liner |
-| Output | `OUTPUT_HOOK.js` | `DCP("output")` — one-liner |
-| Context | `CONTEXT_HOOK.js` | `DCP("context")` — one-liner |
-
-### Why This Pattern?
-
-- **Single source of truth** — all logic in one file, no duplication
-- **No cross-tab issues** — Library defines the function, hooks just call it
-- **Easy to maintain** — update one file instead of four
-- **Composable** — other scripts can coexist by adding their own `globalThis.` functions
-
----
-
-## Disclaimer
-
-DCP injects character data into AI context but cannot guarantee the AI will use every detail perfectly every turn. Results improve with well-written profile sections. Pair with a strong story card for best results.
+1. Build profiles with `import` or `importb64`
+2. Verify activation with `/profile show` and `/profile keywords`
+3. Tune `budget` and `maxActive` for scene density
+4. Use `exportallb64` for scenario-to-scenario migration
