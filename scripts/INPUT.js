@@ -1,12 +1,20 @@
-// DCP v4 — Input tab (one-liner, all logic in Library)
+// DCP v4.1 + DCPTime v1.4.1 Input Modifier
 const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
 
-  if (typeof DCP !== "function") return { text: text || " " };
+  const raw = String(text || "").trim();
 
-  DCP("input");
+  // Important: /time commands must bypass DCP input parsing,
+  // otherwise DCP clears pending command output as "non-/profile" input.
+  if (/^\/time(?:\s|$)/i.test(raw)) {
+    DCPTime("input");
+    return { text: globalThis.text, stop: (globalThis.stop === true) };
+  }
 
-  return { text: globalThis.text || " " };
+  DCPTime("input");
+  if (globalThis.stop !== true) DCP("input");
+
+  return { text: globalThis.text, stop: (globalThis.stop === true) };
 };
 modifier(text);
