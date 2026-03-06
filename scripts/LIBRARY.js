@@ -1,22 +1,22 @@
 // ============================================================
-// DCP v4.1 — LIBRARY (all logic lives here)
-//
-// Fixes in v4.1:
-// - Correct command-stop behavior (uses globalThis.stop = true)
-// - Safe export/import payload encoding (base64 for section content)
-// - Graceful context injection when maxChars is tight (partial fit)
-// - Case-insensitive profile/action/section handling
+// DCP v1.4.1 — LIBRARY (all logic lives here)
 // ============================================================
 
 globalThis.DCP = function DCP(hook) {
   "use strict";
 
   // === STATE INIT ===
-  if (!state.dcp) {
-    state.dcp = {
-      profiles: {},
-      config: { budget: 800, fallback: "personality", debug: false, sectionKeywords: {}, widgets: false, maxActive: 0 }
-    };
+  if ((typeof state.dcp !== "object") || (state.dcp === null) || Array.isArray(state.dcp)) {
+    state.dcp = {};
+  }
+  if ((typeof state.dcp.profiles !== "object") || (state.dcp.profiles === null) || Array.isArray(state.dcp.profiles)) {
+    state.dcp.profiles = {};
+  }
+  if ((typeof state.dcp.config !== "object") || (state.dcp.config === null) || Array.isArray(state.dcp.config)) {
+    state.dcp.config = {};
+  }
+  if (typeof state.dcp._pending !== "string") {
+    state.dcp._pending = "";
   }
   var S = state.dcp;
   S.config = S.config || {};
@@ -27,6 +27,7 @@ globalThis.DCP = function DCP(hook) {
   S.config.widgets = !!S.config.widgets;
   S.config.maxActive = parseInt(S.config.maxActive, 10);
   if (isNaN(S.config.maxActive) || S.config.maxActive < 0) S.config.maxActive = 0;
+
 
   var SECTIONS = [
     "appearance", "personality", "history", "abilities", "quirks",
@@ -72,6 +73,7 @@ globalThis.DCP = function DCP(hook) {
     }
     return arr;
   }
+
 
   function toBase64(s) {
     if (!s) return "";
@@ -205,6 +207,8 @@ globalThis.DCP = function DCP(hook) {
 
     for (var p = 0; p < parts.length; p++) {
       var trimmed = parts[p].trim();
+
+
       if (trimmed.indexOf("/profile") !== 0) continue;
       if (trimmed.length > 8 && trimmed.charAt(8) !== " ") continue;
 
@@ -656,7 +660,7 @@ globalThis.DCP = function DCP(hook) {
       state.message = msg;
       state.dcp._pending = msg;
       globalThis.text = " ";
-      globalThis.stop = true;
+      globalThis.stop = false;
     }
     return;
   }
@@ -668,13 +672,16 @@ globalThis.DCP = function DCP(hook) {
   if (hook === "context") {
     var text = stripBDTags(globalThis.text || "");
     globalThis.text = text;
+
     state.dcpRuntime = { activeCount: 0, activeNames: [], top: [], used: 0 };
     var profiles = S.profiles;
     var pkeys = [];
     for (var k in profiles) {
       if (profiles.hasOwnProperty(k)) pkeys.push(k);
     }
-    if (pkeys.length === 0) return;
+    if (pkeys.length === 0) {
+        return;
+    }
 
     var hist = (typeof history !== "undefined") ? history : [];
     var lookback = Math.min(6, hist.length);
@@ -715,7 +722,9 @@ globalThis.DCP = function DCP(hook) {
 
     state.dcpRuntime.activeCount = active.length;
     state.dcpRuntime.activeNames = active.slice(0, 5);
-    if (active.length === 0) return;
+    if (active.length === 0) {
+        return;
+    }
 
     var scores = {};
     for (var cat in KEYWORDS) {
@@ -870,7 +879,288 @@ globalThis.DCP = function DCP(hook) {
       S._widgetActive = false;
     }
 
+
+
     globalThis.text = outText;
     return;
   }
 };
+
+
+
+
+
+// ============================================================
+// DCPTime v1.3.0 (composed with DCP; does not wrap DCP)
+// ============================================================
+globalThis.DCPTime = function DCPTime(hook) {
+  "use strict";
+
+  state.dcpTime = state.dcpTime || {
+    enabled: true,
+    showContext: true,
+    showOutput: true,
+    showStateMessage: false,
+    minutesPerAction: 10,
+    day: 1,
+    hour: 8,
+    minute: 0,
+    phase: "Morning",
+    lastInput: "",
+    lastAdvanceAction: -1
+  };
+
+  var T = state.dcpTime;
+
+  function trimStr(s) {
+    return String(s || "").replace(/^\s+|\s+$/g, "");
+  }
+
+  function pad2(n) {
+    n = parseInt(n, 10);
+    if (isNaN(n)) n = 0;
+    return (n < 10 ? "0" : "") + String(n);
+  }
+
+  function isCmd(raw, cmd) {
+    var t = trimStr(raw).toLowerCase();
+    var c = String(cmd || "").toLowerCase();
+    if (t.indexOf(c) !== 0) return false;
+    return (t.length === c.length || t.charAt(c.length) === " ");
+  }
+
+  function parseOnOff(v) {
+    v = trimStr(v).toLowerCase();
+    if (v === "on" || v === "true" || v === "1" || v === "yes") return true;
+    if (v === "off" || v === "false" || v === "0" || v === "no") return false;
+    return null;
+  }
+
+  function parseHHMM(raw) {
+    var m = trimStr(raw).match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    var hh = parseInt(m[1], 10);
+    var mm = parseInt(m[2], 10);
+    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return [hh, mm];
+  }
+
+  function parseDuration(raw) {
+    var out = { d: 0, h: 0, m: 0, ok: false };
+    var s = trimStr(raw).toLowerCase();
+    if (!s) return out;
+    var toks = s.split(/\s+/);
+    for (var i = 0; i < toks.length; i++) {
+      var x = null;
+      if ((x = toks[i].match(/^(\d+)d$/))) { out.d += parseInt(x[1], 10); out.ok = true; continue; }
+      if ((x = toks[i].match(/^(\d+)h$/))) { out.h += parseInt(x[1], 10); out.ok = true; continue; }
+      if ((x = toks[i].match(/^(\d+)m$/))) { out.m += parseInt(x[1], 10); out.ok = true; continue; }
+      if ((x = toks[i].match(/^(\d+)$/))) { out.m += parseInt(x[1], 10); out.ok = true; continue; }
+    }
+    return out;
+  }
+
+  function normalizeTime() {
+    T.minutesPerAction = parseInt(T.minutesPerAction, 10);
+    if (isNaN(T.minutesPerAction) || T.minutesPerAction < 1 || T.minutesPerAction > 60) T.minutesPerAction = 10;
+
+    T.day = parseInt(T.day, 10);
+    if (isNaN(T.day) || T.day < 1) T.day = 1;
+
+    T.hour = parseInt(T.hour, 10);
+    if (isNaN(T.hour) || T.hour < 0 || T.hour > 23) T.hour = 8;
+
+    T.minute = parseInt(T.minute, 10);
+    if (isNaN(T.minute) || T.minute < 0 || T.minute > 59) T.minute = 0;
+
+    while (T.minute >= 60) { T.minute -= 60; T.hour += 1; }
+    while (T.minute < 0) { T.minute += 60; T.hour -= 1; }
+    while (T.hour >= 24) { T.hour -= 24; T.day += 1; }
+    while (T.hour < 0) { T.hour += 24; T.day -= 1; }
+    if (T.day < 1) T.day = 1;
+
+    if (T.hour >= 6 && T.hour < 12) T.phase = "Morning";
+    else if (T.hour >= 12 && T.hour < 17) T.phase = "Afternoon";
+    else if (T.hour >= 17 && T.hour < 20) T.phase = "Evening";
+    else T.phase = "Night";
+
+    T.enabled = (T.enabled !== false);
+    T.showContext = (T.showContext !== false);
+    T.showOutput = (T.showOutput !== false);
+    T.showStateMessage = !!T.showStateMessage;
+    T.lastInput = String(T.lastInput || "");
+
+    T.lastAdvanceAction = parseInt(T.lastAdvanceAction, 10);
+    if (isNaN(T.lastAdvanceAction)) T.lastAdvanceAction = -1;
+  }
+
+  function applyMacros(lowerInput) {
+    if (lowerInput.indexOf("go to sleep") !== -1) {
+      T.hour = 8;
+      T.minute = 0;
+      T.day += 1;
+      return;
+    }
+    if (lowerInput.indexOf("rest a bit") !== -1) {
+      T.hour += 4;
+      return;
+    }
+    if (lowerInput.indexOf("fly to the moon") !== -1) {
+      T.hour += 16;
+      T.minute += 30;
+      return;
+    }
+  }
+
+  normalizeTime();
+
+  if (hook === "input") {
+    var raw = trimStr(globalThis.text || "");
+    T.lastInput = raw;
+
+    if (!isCmd(raw, "/time")) return;
+
+    var argStr = trimStr(raw.substring(5));
+    var sp = argStr.indexOf(" ");
+    var action = (sp === -1 ? argStr : argStr.substring(0, sp)).toLowerCase();
+    var rest = trimStr(sp === -1 ? "" : argStr.substring(sp + 1));
+    var msg = "";
+
+    if (action === "" || action === "help") {
+      msg = [
+        "=== DCP Time Commands ===",
+        "/time show",
+        "/time set <HH:MM> [nextday]",
+        "/time add <Nd Nh Nm>",
+        "/time config",
+        "/time config enabled <on|off>",
+        "/time config context <on|off>",
+        "/time config output <on|off>",
+        "/time config message <on|off>",
+        "/time config minutes <1-60>"
+      ].join("\n");
+    } else if (action === "show" || action === "status") {
+      msg = "Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), Day " + T.day +
+        " | enabled=" + (T.enabled ? "on" : "off") +
+        " | context=" + (T.showContext ? "on" : "off") +
+        " | output=" + (T.showOutput ? "on" : "off") +
+        " | message=" + (T.showStateMessage ? "on" : "off") +
+        " | minutesPerAction=" + T.minutesPerAction;
+    } else if (action === "set") {
+      var p = rest ? rest.split(/\s+/) : [];
+      if (!p.length) {
+        msg = "Usage: /time set <HH:MM> [nextday]";
+      } else {
+        var tt = parseHHMM(p[0]);
+        if (!tt) {
+          msg = "Bad time. Use HH:MM (24h), example: 08:00";
+        } else {
+          T.hour = tt[0];
+          T.minute = tt[1];
+          if (p.length > 1 && String(p[1]).toLowerCase() === "nextday") T.day += 1;
+          normalizeTime();
+          msg = "Time set: Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + ")";
+        }
+      }
+    } else if (action === "add") {
+      var d = parseDuration(rest);
+      if (!d.ok) {
+        msg = "Usage: /time add <Nd Nh Nm> (example: /time add 1d 4h 30m)";
+      } else {
+        T.day += d.d;
+        T.hour += d.h;
+        T.minute += d.m;
+        normalizeTime();
+        msg = "Time advanced: Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + ")";
+      }
+    } else if (action === "config") {
+      if (!rest) {
+        msg = "Time config: enabled=" + (T.enabled ? "on" : "off") +
+          " | context=" + (T.showContext ? "on" : "off") +
+          " | output=" + (T.showOutput ? "on" : "off") +
+          " | message=" + (T.showStateMessage ? "on" : "off") +
+          " | minutes=" + T.minutesPerAction +
+          " | day=" + T.day +
+          " | time=" + pad2(T.hour) + ":" + pad2(T.minute);
+      } else {
+        var sp2 = rest.indexOf(" ");
+        var key = (sp2 === -1 ? rest : rest.substring(0, sp2)).toLowerCase();
+        var val = trimStr(sp2 === -1 ? "" : rest.substring(sp2 + 1));
+
+        if (key === "enabled" || key === "context" || key === "output" || key === "message") {
+          var b = parseOnOff(val);
+          if (b === null) {
+            msg = "Usage: /time config " + key + " <on|off>";
+          } else {
+            if (key === "enabled") T.enabled = b;
+            else if (key === "context") T.showContext = b;
+            else if (key === "output") T.showOutput = b;
+            else T.showStateMessage = b;
+            msg = "Time config " + key + ": " + (b ? "on" : "off");
+          }
+        } else if (key === "minutes") {
+          var mins = parseInt(val, 10);
+          if (isNaN(mins) || mins < 1 || mins > 60) msg = "Minutes must be 1-60";
+          else {
+            T.minutesPerAction = mins;
+            msg = "Minutes per action: " + mins;
+          }
+        } else {
+          msg = "Time config keys: enabled, context, output, message, minutes";
+        }
+      }
+    } else {
+      msg = "Unknown /time command: " + action + ". Try /time help";
+    }
+
+    state.message = msg;
+    state.dcp = state.dcp || {};
+    state.dcp._pending = msg;
+    globalThis.text = " ";
+    globalThis.stop = false;
+    return;
+  }
+
+  if (hook === "context") {
+    var actionCount = -1;
+    if (typeof info !== "undefined" && info && typeof info.actionCount === "number") {
+      actionCount = Math.abs(parseInt(info.actionCount, 10));
+    }
+
+    if (actionCount >= 0 && actionCount !== T.lastAdvanceAction) {
+      T.lastAdvanceAction = actionCount;
+      if (T.enabled) {
+        var lower = trimStr(T.lastInput).toLowerCase();
+        var commandTurn = isCmd(lower, "/profile") || isCmd(lower, "/time");
+        if (!commandTurn) {
+          applyMacros(lower);
+          T.minute += T.minutesPerAction;
+          normalizeTime();
+        }
+      }
+    }
+
+    if (T.enabled && T.showContext && globalThis.stop !== true) {
+      var timeData = "Day: " + T.day + ", Time: " + pad2(T.hour) + ":" + pad2(T.minute) + ", Phase: " + T.phase;
+      globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: " + timeData + "]";
+    }
+    return;
+  }
+
+  if (hook === "output") {
+    normalizeTime();
+
+    var lowerOut = trimStr(T.lastInput).toLowerCase();
+    var commandOut = isCmd(lowerOut, "/profile") || isCmd(lowerOut, "/time");
+
+    if (!commandOut && T.enabled && T.showOutput) {
+      globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), Day #: " + T.day + "]";
+    }
+
+    if (!commandOut && T.enabled && T.showStateMessage) {
+      state.message = "Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute);
+    }
+  }
+};
+
+// DCP build: 1.4.0 (no-stop command mode)
