@@ -1,10 +1,11 @@
-// DCP v4 — Context tab (one-liner, all logic in Library)
+// DCP v4.1 + DCPTime v1.3.0 Context Modifier
 const modifier = (text) => {
   globalThis.text = text;
-  if (typeof DCP !== "function") return { text: text || " " };
+  globalThis.stop = false;
 
   DCP("context");
-  var out = globalThis.text || text || " ";
-  return { text: out || " " };
+  if (globalThis.stop !== true) DCPTime("context");
+
+  return { text: globalThis.text, stop: (globalThis.stop === true) };
 };
 modifier(text);
