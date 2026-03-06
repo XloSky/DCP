@@ -1,9 +1,10 @@
-// DCP v4 — Output tab (one-liner, all logic in Library)
+// DCP v4.1 + DCPTime v1.3.0 Output Modifier
 const modifier = (text) => {
   globalThis.text = text;
-  if (typeof DCP !== "function") return { text: text || " " };
 
   DCP("output");
-  return { text: globalThis.text || " " };
+  DCPTime("output");
+
+  return { text: globalThis.text };
 };
 modifier(text);
