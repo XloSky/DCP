@@ -1,4 +1,4 @@
-// DCP v4.1 + DCPTime v1.3.0 Output Modifier
+// DCP v4.4 + DCPTime v1.4.8 Output Modifier
 const modifier = (text) => {
   globalThis.text = text;
 
