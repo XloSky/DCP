@@ -1,4 +1,4 @@
-// DCP v4.1 + DCPTime v1.3.0 Context Modifier
+// DCP v4.4 + DCPTime v1.4.8 Context Modifier
 const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
