@@ -1,11 +1,13 @@
-// DCP v4.4 + DCPTime v1.4.8 Context Modifier
 const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
 
-  DCP("context");
-  if (globalThis.stop !== true) DCPTime("context");
+  if (typeof DCPTime === "function") DCPTime("context");
+  if (globalThis.stop !== true && typeof DCP === "function") DCP("context");
 
-  return { text: globalThis.text, stop: (globalThis.stop === true) };
-};
-modifier(text);
+  return {
+    text: globalThis.text || " ",
+    stop: globalThis.stop === true
+  };
+}
+modifier(text)
