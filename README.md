@@ -8,11 +8,11 @@ It uses a library-centric hook pattern: all logic lives in the Library script, a
 
 ## Current Version
 
-- Standalone merged library: `version/dcp-library-merged-v1.4.7.js`
+- Standalone merged library: `versions/1.5.0/dcp-library-merged-v1.5.0.js`
 - Minimal wrappers:
-  - `version/dcp-input-modifier-v1.4.7.js`
-  - `version/dcp-context-modifier-v1.4.7.js`
-  - `version/dcp-output-modifier-v1.4.7.js`
+  - `versions/1.5.0/dcp-input-modifier-v1.5.0.js`
+  - `versions/1.5.0/dcp-context-modifier-v1.5.0.js`
+  - `versions/1.5.0/dcp-output-modifier-v1.5.0.js`
 
 ## What DCP Solves
 
@@ -38,9 +38,12 @@ AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper char
 - Output run-on repair for common punctuation-spacing issues
 - Time system with:
   - configurable minutes-per-action
-  - configurable displayed calendar anchor date
+  - configurable displayed calendar date
+  - configurable `12h` or `24h` display format
   - automatic phase-of-day labeling
   - rollover snapping such as `07:59 -> 08:00`
+  - quick macro commands such as `/sleep`, `/nap`, `/rest`, and `/wait`
+  - pause and resume control for automatic turn advancement
   - calendar-style output such as `[Time: 20:23 (Night), 12/31/2026 (Winter)]`
 
 ## Setup
@@ -48,13 +51,13 @@ AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper char
 Paste these exact files into AI Dungeon:
 
 1. Library tab:
-   - `version/dcp-library-merged-v1.4.7.js`
+   - `versions/1.5.0/dcp-library-merged-v1.5.0.js`
 2. Input tab:
-   - `version/dcp-input-modifier-v1.4.7.js`
+   - `versions/1.5.0/dcp-input-modifier-v1.5.0.js`
 3. Context tab:
-   - `version/dcp-context-modifier-v1.4.7.js`
+   - `versions/1.5.0/dcp-context-modifier-v1.5.0.js`
 4. Output tab:
-   - `version/dcp-output-modifier-v1.4.7.js`
+   - `versions/1.5.0/dcp-output-modifier-v1.5.0.js`
 
 Minimal wrappers:
 
@@ -172,12 +175,24 @@ Example:
 
 ## Time Commands
 
+- `/now`
+- `/sleep [time]`
+- `/sleep until <time>`
+- `/nap [duration]`
+- `/rest [duration]`
+- `/wait <duration>`
+- `/wait until <time>`
+- `/waituntil <time>`
+- `/tomorrow [time]`
+- `/pause`
+- `/resume`
 - `/time help`
 - `/time show`
-- `/time set <HH:MM> [nextday]`
+- `/time set <time> [nextday]`
 - `/time add <Nd Nh Nm>`
 - `/time config`
 - `/time config date <MM/DD/YYYY>`
+- `/time config format <12h|24h>`
 - `/time config enabled <on|off>`
 - `/time config context <on|off>`
 - `/time config output <on|off>`
@@ -188,13 +203,14 @@ Example:
 
 ```text
 /time config date 12/31/2026
-/time set 20:23
+/time config format 12h
+/time set 8:23 PM
 ```
 
 That produces output like:
 
 ```text
-[Time: 20:23 (Night), 12/31/2026 (Winter)]
+[Time: 8:23 PM (Night), 12/31/2026 (Winter)]
 ```
 
 ## Runtime Behavior
@@ -217,16 +233,16 @@ Each turn:
 
 1. The system records the latest input.
 2. `/profile` and `/time` command turns do not advance time.
-3. Normal turns advance by `minutesPerAction`.
-4. If the turn crosses the hour boundary from `:59`, the clock snaps to the next hour.
-5. The displayed calendar stamp is derived from:
-   - internal `day`
-   - configured anchor date from `/time config date`
-6. Phase is derived from the current hour:
+3. Quick time commands such as `/sleep`, `/nap`, `/rest`, `/wait`, `/tomorrow`, `/pause`, and `/resume` also do not consume automatic turn advancement.
+4. Normal turns advance by `minutesPerAction`, unless time is paused.
+5. If the turn crosses the hour boundary from `:59`, the clock snaps to the next hour.
+6. `/time config date` sets the current displayed date.
+7. Phase is derived from the current hour:
    - Morning: `06:00-11:59`
    - Afternoon: `12:00-16:59`
    - Evening: `17:00-19:59`
    - Night: `20:00-05:59`
+8. Display format is controlled by `/time config format <12h|24h>`.
 
 ## Seasons
 
@@ -270,10 +286,11 @@ Season rollover dates:
 
 ## Recommended Workflow
 
-1. Paste the `v1.4.7` merged library and minimal wrappers.
+1. Paste the `v1.5.0` merged library and minimal wrappers.
 2. Build profiles with `import` or `importb64`.
 3. Verify activation with `/profile show` and `/profile keywords`.
 4. Tune `budget` and `maxActive` for scene density.
-5. Set the displayed calendar anchor with `/time config date`.
-6. Set the clock with `/time set`.
-7. Use `exportallb64` or `exportallchunks` for migration between scenarios.
+5. Set the displayed calendar date with `/time config date`.
+6. Choose `12h` or `24h` output with `/time config format`.
+7. Set the clock with `/time set` or use the quick time commands.
+8. Use `exportallb64` or `exportallchunks` for migration between scenarios.
