@@ -1,4 +1,4 @@
-// DCP standalone merged library v1.4.7
+// DCP standalone merged library v1.5.0
 // Includes DCP profiles and DCPTime in one Library file.
 (function () {
   "use strict";
@@ -9,6 +9,8 @@
   ];
   var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var WIDGET_IDS = ["dcp_active", "dcp_budget", "dcp_focus"];
+  var EXTRACT_COMMAND_TOKENS = ["/profile", "/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
+  var TIME_COMMAND_TOKENS = ["/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
 
   function trimStr(s) {
     return String(s || "").replace(/^\s+|\s+$/g, "");
@@ -61,6 +63,13 @@
     return raw.indexOf(token) === 0 && (raw.length === token.length || raw.charAt(token.length) === " ");
   }
 
+  function startsWithAnyCommand(raw, tokens) {
+    for (var i = 0; i < tokens.length; i++) {
+      if (startsWithCommand(raw, tokens[i])) return true;
+    }
+    return false;
+  }
+
   function isCommandBoundary(ch) {
     return !ch || " \t\r\n\"'`([{<".indexOf(ch) !== -1;
   }
@@ -101,7 +110,11 @@
   }
 
   function extractAnyCommand(raw) {
-    return extractEmbeddedCommand(raw, "/profile") || extractEmbeddedCommand(raw, "/time") || "";
+    for (var i = 0; i < EXTRACT_COMMAND_TOKENS.length; i++) {
+      var found = extractEmbeddedCommand(raw, EXTRACT_COMMAND_TOKENS[i]);
+      if (found) return found;
+    }
+    return "";
   }
 
   function profileSize(profile) {
@@ -337,9 +350,11 @@
     if (!state.dcpTime || typeof state.dcpTime !== "object" || Array.isArray(state.dcpTime)) state.dcpTime = {};
     var T = state.dcpTime;
     if (typeof T.enabled !== "boolean") T.enabled = true;
+    if (typeof T.paused !== "boolean") T.paused = false;
     if (typeof T.showContext !== "boolean") T.showContext = true;
     if (typeof T.showOutput !== "boolean") T.showOutput = true;
     if (typeof T.showStateMessage !== "boolean") T.showStateMessage = false;
+    if (typeof T.timeFormat !== "string") T.timeFormat = "24h";
     if (typeof T.minutesPerAction !== "number") T.minutesPerAction = 10;
     if (typeof T.day !== "number") T.day = 1;
     if (typeof T.hour !== "number") T.hour = 8;
@@ -378,9 +393,11 @@
     else T.phase = "Night";
 
     T.enabled = (T.enabled !== false);
+    T.paused = !!T.paused;
     T.showContext = (T.showContext !== false);
     T.showOutput = (T.showOutput !== false);
     T.showStateMessage = !!T.showStateMessage;
+    T.timeFormat = normalizeTimeFormat(T.timeFormat) || "24h";
     T.lastInput = String(T.lastInput || "");
     T.lastAdvanceAction = parseInt(T.lastAdvanceAction, 10);
     if (isNaN(T.lastAdvanceAction)) T.lastAdvanceAction = -1;
@@ -401,6 +418,38 @@
     return (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) ? null : [hh, mm];
   }
 
+  function parseClockTime(raw) {
+    var clean = trimStr(raw);
+    var parsed = parseHHMM(clean);
+    if (parsed) return parsed;
+    var match = clean.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (!match) return null;
+    var hh = parseInt(match[1], 10);
+    var mm = parseInt(match[2], 10);
+    var suffix = match[3].toUpperCase();
+    if (isNaN(hh) || isNaN(mm) || hh < 1 || hh > 12 || mm < 0 || mm > 59) return null;
+    if (suffix === "AM") hh = (hh === 12) ? 0 : hh;
+    else hh = (hh === 12) ? 12 : (hh + 12);
+    return [hh, mm];
+  }
+
+  function normalizeTimeFormat(value) {
+    var clean = lowerStr(value).replace(/\s+/g, "");
+    if (clean === "24h" || clean === "24" || clean === "military" || clean === "militarytime") return "24h";
+    if (clean === "12h" || clean === "12" || clean === "standard" || clean === "ampm" || clean === "am/pm") return "12h";
+    return "";
+  }
+
+  function formatClockParts(hour, minute, format) {
+    if ((normalizeTimeFormat(format) || "24h") === "12h") {
+      var suffix = (hour >= 12) ? "PM" : "AM";
+      var displayHour = hour % 12;
+      if (displayHour === 0) displayHour = 12;
+      return String(displayHour) + ":" + pad2(minute) + " " + suffix;
+    }
+    return pad2(hour) + ":" + pad2(minute);
+  }
+
   function parseDuration(raw) {
     var out = { d: 0, h: 0, m: 0, ok: false };
     var toks = trimStr(raw).toLowerCase().split(/\s+/);
@@ -414,25 +463,38 @@
     return out;
   }
 
-  function getActionCount() {
-    return (typeof info !== "undefined" && info && typeof info.actionCount === "number") ? Math.abs(parseInt(info.actionCount, 10)) : -1;
+  function applyTimeMacros(_T, _lowerInput) {
+    return;
   }
 
-  function applyTimeMacros(T, lowerInput) {
-    if (lowerInput.indexOf("go to sleep") !== -1) {
-      T.hour = 8;
-      T.minute = 0;
-      T.day += 1;
-      return;
-    }
-    if (lowerInput.indexOf("rest a bit") !== -1) {
-      T.hour += 4;
-      return;
-    }
-    if (lowerInput.indexOf("fly to the moon") !== -1) {
-      T.hour += 16;
-      T.minute += 30;
-    }
+  function applyDurationAdvance(T, duration) {
+    duration = duration || {};
+    T.day += parseInt(duration.d, 10) || 0;
+    T.hour += parseInt(duration.h, 10) || 0;
+    T.minute += parseInt(duration.m, 10) || 0;
+    normalizeTime(T);
+  }
+
+  function advanceToNextDayTime(T, hour, minute) {
+    normalizeTime(T);
+    T.day += 1;
+    T.hour = hour;
+    T.minute = minute;
+    normalizeTime(T);
+  }
+
+  function advanceToNextOccurrenceTime(T, hour, minute) {
+    normalizeTime(T);
+    var currentMinutes = (T.hour * 60) + T.minute;
+    var targetMinutes = (hour * 60) + minute;
+    if (currentMinutes >= targetMinutes) T.day += 1;
+    T.hour = hour;
+    T.minute = minute;
+    normalizeTime(T);
+  }
+
+  function getActionCount() {
+    return (typeof info !== "undefined" && info && typeof info.actionCount === "number") ? Math.abs(parseInt(info.actionCount, 10)) : -1;
   }
 
   function advanceTurnTime(T) {
@@ -490,6 +552,16 @@
     return null;
   }
 
+  function setDisplayedCalendarDate(T, month, day, year) {
+    normalizeTime(T);
+    var current = new Date(Date.UTC(year, month - 1, day));
+    current.setUTCDate(current.getUTCDate() - (T.day - 1));
+    T.startYear = current.getUTCFullYear();
+    T.startMonth = current.getUTCMonth() + 1;
+    T.startDay = current.getUTCDate();
+    normalizeAnchorDate(T);
+  }
+
   function monthToSeason(month) {
     if (month === 12 || month === 1 || month === 2) return "Winter";
     if (month >= 3 && month <= 5) return "Spring";
@@ -516,6 +588,51 @@
   function formatCalendarStamp(T) {
     var parts = getCalendarParts(T);
     return parts.dateText + " (" + parts.season + ")";
+  }
+
+  function formatClockDisplay(T) {
+    normalizeTime(T);
+    return formatClockParts(T.hour, T.minute, T.timeFormat);
+  }
+
+  function formatTimeWithPhase(T) {
+    return formatClockDisplay(T) + " (" + T.phase + ")";
+  }
+
+  function formatCurrentTimeStamp(T) {
+    return formatTimeWithPhase(T) + ", " + formatCalendarStamp(T);
+  }
+
+  function parseClockWithNextday(raw) {
+    var text = trimStr(raw);
+    var nextday = false;
+    if (/\s+nextday$/i.test(text)) {
+      nextday = true;
+      text = trimStr(text.replace(/\s+nextday$/i, ""));
+    }
+    var parsed = parseClockTime(text);
+    if (!parsed) return null;
+    return { hour: parsed[0], minute: parsed[1], nextday: nextday };
+  }
+
+  function parseOptionalTargetClock(raw, defaultHour, defaultMinute) {
+    var text = trimStr(raw);
+    if (!text) return [defaultHour, defaultMinute];
+    if (/^until\s+/i.test(text)) text = trimStr(text.replace(/^until\s+/i, ""));
+    return parseClockTime(text);
+  }
+
+  function quickTimeUsage(name) {
+    var map = {
+      "/nap": "Usage: /nap [duration]",
+      "/rest": "Usage: /rest [duration]",
+      "/wait": "Usage: /wait <duration> | /wait until <time>",
+      "/waituntil": "Usage: /waituntil <time>",
+      "/sleep": "Usage: /sleep [time] | /sleep until <time>",
+      "/tomorrow": "Usage: /tomorrow [time]",
+      "/time set": "Usage: /time set <time> [nextday]"
+    };
+    return map[name] || ("Usage: " + name);
   }
 
   function profileHelpText() {
@@ -548,16 +665,111 @@
     return [
       "=== DCP Time Commands ===",
       "/time show",
-      "/time set <HH:MM> [nextday]",
+      "/time set <time> [nextday]",
       "/time add <Nd Nh Nm>",
       "/time config",
       "/time config date <MM/DD/YYYY>",
+      "/time config format <12h|24h>",
       "/time config enabled <on|off>",
       "/time config context <on|off>",
       "/time config output <on|off>",
       "/time config message <on|off>",
-      "/time config minutes <1-60>"
+      "/time config minutes <1-60>",
+      "",
+      "Quick commands:",
+      "/now",
+      "/sleep [time]",
+      "/sleep until <time>",
+      "/nap [duration]",
+      "/rest [duration]",
+      "/wait <duration>",
+      "/wait until <time>",
+      "/waituntil <time>",
+      "/tomorrow [time]",
+      "/pause",
+      "/resume",
+      "",
+      "Time values accept 20:23 or 8:23 PM."
     ].join("\n");
+  }
+
+  function handleQuickTimeCommand(cmd, T) {
+    var text = trimStr(cmd);
+    if (!text) return null;
+
+    if (startsWithCommand(text, "/now")) {
+      normalizeTime(T);
+      return "Time: " + formatCurrentTimeStamp(T) + " | paused=" + (T.paused ? "on" : "off");
+    }
+
+    if (startsWithCommand(text, "/pause")) {
+      T.paused = true;
+      normalizeTime(T);
+      return "Time paused: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/resume")) {
+      T.paused = false;
+      normalizeTime(T);
+      return "Time resumed: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/nap")) {
+      var napRest = trimStr(text.substring("/nap".length));
+      var napDuration = napRest ? parseDuration(napRest) : { d: 0, h: 1, m: 0, ok: true };
+      if (!napDuration.ok) return quickTimeUsage("/nap");
+      applyDurationAdvance(T, napDuration);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/rest")) {
+      var restText = trimStr(text.substring("/rest".length));
+      var restDuration = restText ? parseDuration(restText) : { d: 0, h: 4, m: 0, ok: true };
+      if (!restDuration.ok) return quickTimeUsage("/rest");
+      applyDurationAdvance(T, restDuration);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/waituntil")) {
+      var waitUntilText = trimStr(text.substring("/waituntil".length));
+      var waitUntilTime = parseClockTime(waitUntilText);
+      if (!waitUntilTime) return quickTimeUsage("/waituntil");
+      advanceToNextOccurrenceTime(T, waitUntilTime[0], waitUntilTime[1]);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/wait")) {
+      var waitRest = trimStr(text.substring("/wait".length));
+      if (!waitRest) return quickTimeUsage("/wait");
+      if (/^until\s+/i.test(waitRest)) {
+        var waitTarget = parseOptionalTargetClock(waitRest, 0, 0);
+        if (!waitTarget) return quickTimeUsage("/wait");
+        advanceToNextOccurrenceTime(T, waitTarget[0], waitTarget[1]);
+        return "Time advanced: " + formatCurrentTimeStamp(T);
+      }
+      var waitDuration = parseDuration(waitRest);
+      if (!waitDuration.ok) return quickTimeUsage("/wait");
+      applyDurationAdvance(T, waitDuration);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/sleep")) {
+      var sleepRest = trimStr(text.substring("/sleep".length));
+      var sleepTarget = parseOptionalTargetClock(sleepRest, 8, 0);
+      if (!sleepTarget) return quickTimeUsage("/sleep");
+      advanceToNextDayTime(T, sleepTarget[0], sleepTarget[1]);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    if (startsWithCommand(text, "/tomorrow")) {
+      var tomorrowRest = trimStr(text.substring("/tomorrow".length));
+      var tomorrowTarget = parseOptionalTargetClock(tomorrowRest, 8, 0);
+      if (!tomorrowTarget) return quickTimeUsage("/tomorrow");
+      advanceToNextDayTime(T, tomorrowTarget[0], tomorrowTarget[1]);
+      return "Time advanced: " + formatCurrentTimeStamp(T);
+    }
+
+    return null;
   }
 
   function importAllProfiles(S, payloadB64, mode, results) {
@@ -1049,6 +1261,11 @@
       var rawInput = String(globalThis.text || "");
       var extracted = extractAnyCommand(rawInput);
       T.lastInput = extracted || trimStr(rawInput);
+      var quickMsg = handleQuickTimeCommand(T.lastInput, T);
+      if (quickMsg !== null) {
+        setPendingMessage(S, "time", quickMsg);
+        return;
+      }
       if (!startsWithCommand(T.lastInput, "/time")) return;
 
       var argStr = trimStr(T.lastInput.substring("/time".length));
@@ -1058,33 +1275,29 @@
       var msg = "";
 
       if (!action || action === "help") msg = timeHelpText();
-      else if (action === "show" || action === "status") msg = "Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T) + " | enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction;
+      else if (action === "show" || action === "status") msg = "Time: " + formatCurrentTimeStamp(T) + " | format=" + T.timeFormat + " | enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction;
       else if (action === "set") {
-        var parts = rest ? rest.split(/\s+/) : [];
-        if (!parts.length) msg = "Usage: /time set <HH:MM> [nextday]";
+        if (!rest) msg = quickTimeUsage("/time set");
         else {
-          var parsedTime = parseHHMM(parts[0]);
-          if (!parsedTime) msg = "Bad time. Use HH:MM (24h), example: 08:00";
+          var parsedSet = parseClockWithNextday(rest);
+          if (!parsedSet) msg = quickTimeUsage("/time set");
           else {
-            T.hour = parsedTime[0];
-            T.minute = parsedTime[1];
-            if (parts.length > 1 && lowerStr(parts[1]) === "nextday") T.day += 1;
+            T.hour = parsedSet.hour;
+            T.minute = parsedSet.minute;
+            if (parsedSet.nextday) T.day += 1;
             normalizeTime(T);
-            msg = "Time set: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T);
+            msg = "Time set: " + formatCurrentTimeStamp(T);
           }
         }
       } else if (action === "add") {
         var duration = parseDuration(rest);
         if (!duration.ok) msg = "Usage: /time add <Nd Nh Nm> (example: /time add 1d 4h 30m)";
         else {
-          T.day += duration.d;
-          T.hour += duration.h;
-          T.minute += duration.m;
-          normalizeTime(T);
-          msg = "Time advanced: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T);
+          applyDurationAdvance(T, duration);
+          msg = "Time advanced: " + formatCurrentTimeStamp(T);
         }
       } else if (action === "config") {
-        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | date=" + formatCalendarStamp(T) + " | time=" + pad2(T.hour) + ":" + pad2(T.minute);
+        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | format=" + T.timeFormat + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | date=" + formatCalendarStamp(T) + " | time=" + formatClockDisplay(T);
         else {
           var sp2 = rest.indexOf(" ");
           var key = lowerStr(sp2 === -1 ? rest : rest.substring(0, sp2));
@@ -1093,11 +1306,16 @@
             var parsedDate = parseCalendarDate(val);
             if (!parsedDate) msg = "Usage: /time config date <MM/DD/YYYY>";
             else {
-              T.startMonth = parsedDate[0];
-              T.startDay = parsedDate[1];
-              T.startYear = parsedDate[2];
-              normalizeAnchorDate(T);
+              setDisplayedCalendarDate(T, parsedDate[0], parsedDate[1], parsedDate[2]);
               msg = "Time config date: " + formatCalendarStamp(T);
+            }
+          } else if (key === "format") {
+            var parsedFormat = normalizeTimeFormat(val);
+            if (!parsedFormat) msg = "Usage: /time config format <12h|24h>";
+            else {
+              T.timeFormat = parsedFormat;
+              normalizeTime(T);
+              msg = "Time format: " + T.timeFormat;
             }
           } else if (key === "enabled" || key === "context" || key === "output" || key === "message") {
             var boolVal = parseOnOff(val);
@@ -1113,7 +1331,7 @@
             var minutes = parseInt(val, 10);
             if (isNaN(minutes) || minutes < 1 || minutes > 60) msg = "Minutes must be 1-60";
             else { T.minutesPerAction = minutes; msg = "Minutes per action: " + minutes; }
-          } else msg = "Time config keys: date, enabled, context, output, message, minutes";
+          } else msg = "Time config keys: date, format, enabled, context, output, message, minutes";
         }
       } else msg = "Unknown /time command: " + action + ". Try /time help";
 
@@ -1126,9 +1344,9 @@
       var actionCount = getActionCount();
       if (actionCount >= 0 && actionCount !== T.lastAdvanceAction) {
         T.lastAdvanceAction = actionCount;
-        if (T.enabled) {
+        if (T.enabled && !T.paused) {
           var effectiveInput = trimStr(T.lastInput || "");
-          var commandTurn = startsWithCommand(effectiveInput, "/profile") || startsWithCommand(effectiveInput, "/time");
+          var commandTurn = startsWithCommand(effectiveInput, "/profile") || startsWithAnyCommand(effectiveInput, TIME_COMMAND_TOKENS);
           if (!commandTurn) {
             applyTimeMacros(T, effectiveInput.toLowerCase());
             advanceTurnTime(T);
@@ -1137,19 +1355,19 @@
         }
       }
       if (T.enabled && T.showContext && globalThis.stop !== true) {
-        globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: Date: " + formatCalendarStamp(T) + ", Time: " + pad2(T.hour) + ":" + pad2(T.minute) + ", Phase: " + T.phase + "]";
+        globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: Date: " + formatCalendarStamp(T) + ", Time: " + formatClockDisplay(T) + ", Phase: " + T.phase + "]";
       }
       return;
     }
 
     if (hook === "output") {
       normalizeTime(T);
-      var commandOut = startsWithCommand(T.lastInput || "", "/profile") || startsWithCommand(T.lastInput || "", "/time");
+      var commandOut = startsWithCommand(T.lastInput || "", "/profile") || startsWithAnyCommand(T.lastInput || "", TIME_COMMAND_TOKENS);
       if (!commandOut && T.enabled && T.showOutput) {
-        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T) + "]";
+        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + formatClockDisplay(T) + " (" + T.phase + "), " + formatCalendarStamp(T) + "]";
       }
       if (!commandOut && T.enabled && T.showStateMessage) {
-        state.message = formatCalendarStamp(T) + " " + pad2(T.hour) + ":" + pad2(T.minute);
+        state.message = formatCalendarStamp(T) + " " + formatClockDisplay(T);
       }
       return;
     }
