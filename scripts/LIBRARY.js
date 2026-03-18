@@ -1,4 +1,4 @@
-// DCP standalone merged library v1.4.6
+// DCP standalone merged library v1.4.7
 // Includes DCP profiles and DCPTime in one Library file.
 (function () {
   "use strict";
@@ -347,7 +347,11 @@
     if (typeof T.phase !== "string") T.phase = "Morning";
     if (typeof T.lastInput !== "string") T.lastInput = "";
     if (typeof T.lastAdvanceAction !== "number") T.lastAdvanceAction = -1;
+    if (typeof T.startYear !== "number") T.startYear = NaN;
+    if (typeof T.startMonth !== "number") T.startMonth = NaN;
+    if (typeof T.startDay !== "number") T.startDay = NaN;
     normalizeTime(T);
+    normalizeAnchorDate(T);
     return T;
   }
 
@@ -443,6 +447,77 @@
     }
   }
 
+  function normalizeAnchorDate(T) {
+    var now = new Date();
+    var year = parseInt(T.startYear, 10);
+    var month = parseInt(T.startMonth, 10);
+    var day = parseInt(T.startDay, 10);
+
+    if (isNaN(year)) year = now.getFullYear();
+    if (isNaN(month)) month = now.getMonth() + 1;
+    if (isNaN(day)) day = now.getDate();
+
+    var anchor = new Date(Date.UTC(year, month - 1, day));
+    if (isNaN(anchor.getTime())) anchor = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+
+    T.startYear = anchor.getUTCFullYear();
+    T.startMonth = anchor.getUTCMonth() + 1;
+    T.startDay = anchor.getUTCDate();
+  }
+
+  function parseCalendarDate(raw) {
+    var text = trimStr(raw);
+    var match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (match) {
+      var mm = parseInt(match[1], 10);
+      var dd = parseInt(match[2], 10);
+      var yyyy = parseInt(match[3], 10);
+      var probe = new Date(Date.UTC(yyyy, mm - 1, dd));
+      if (!isNaN(probe.getTime()) && probe.getUTCFullYear() === yyyy && (probe.getUTCMonth() + 1) === mm && probe.getUTCDate() === dd) {
+        return [mm, dd, yyyy];
+      }
+      return null;
+    }
+    match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    var year = parseInt(match[1], 10);
+    var month = parseInt(match[2], 10);
+    var day = parseInt(match[3], 10);
+    var check = new Date(Date.UTC(year, month - 1, day));
+    if (!isNaN(check.getTime()) && check.getUTCFullYear() === year && (check.getUTCMonth() + 1) === month && check.getUTCDate() === day) {
+      return [month, day, year];
+    }
+    return null;
+  }
+
+  function monthToSeason(month) {
+    if (month === 12 || month === 1 || month === 2) return "Winter";
+    if (month >= 3 && month <= 5) return "Spring";
+    if (month >= 6 && month <= 8) return "Summer";
+    return "Autumn";
+  }
+
+  function getCalendarParts(T) {
+    normalizeAnchorDate(T);
+    var current = new Date(Date.UTC(T.startYear, T.startMonth - 1, T.startDay));
+    current.setUTCDate(current.getUTCDate() + (T.day - 1));
+    var month = current.getUTCMonth() + 1;
+    var day = current.getUTCDate();
+    var year = current.getUTCFullYear();
+    return {
+      month: month,
+      day: day,
+      year: year,
+      season: monthToSeason(month),
+      dateText: pad2(month) + "/" + pad2(day) + "/" + String(year)
+    };
+  }
+
+  function formatCalendarStamp(T) {
+    var parts = getCalendarParts(T);
+    return parts.dateText + " (" + parts.season + ")";
+  }
+
   function profileHelpText() {
     return [
       "=== DCP Commands ===",
@@ -476,6 +551,7 @@
       "/time set <HH:MM> [nextday]",
       "/time add <Nd Nh Nm>",
       "/time config",
+      "/time config date <MM/DD/YYYY>",
       "/time config enabled <on|off>",
       "/time config context <on|off>",
       "/time config output <on|off>",
@@ -982,7 +1058,7 @@
       var msg = "";
 
       if (!action || action === "help") msg = timeHelpText();
-      else if (action === "show" || action === "status") msg = "Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), Day " + T.day + " | enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction;
+      else if (action === "show" || action === "status") msg = "Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T) + " | enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction;
       else if (action === "set") {
         var parts = rest ? rest.split(/\s+/) : [];
         if (!parts.length) msg = "Usage: /time set <HH:MM> [nextday]";
@@ -994,7 +1070,7 @@
             T.minute = parsedTime[1];
             if (parts.length > 1 && lowerStr(parts[1]) === "nextday") T.day += 1;
             normalizeTime(T);
-            msg = "Time set: Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + ")";
+            msg = "Time set: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T);
           }
         }
       } else if (action === "add") {
@@ -1005,15 +1081,25 @@
           T.hour += duration.h;
           T.minute += duration.m;
           normalizeTime(T);
-          msg = "Time advanced: Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + ")";
+          msg = "Time advanced: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T);
         }
       } else if (action === "config") {
-        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | day=" + T.day + " | time=" + pad2(T.hour) + ":" + pad2(T.minute);
+        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | date=" + formatCalendarStamp(T) + " | time=" + pad2(T.hour) + ":" + pad2(T.minute);
         else {
           var sp2 = rest.indexOf(" ");
           var key = lowerStr(sp2 === -1 ? rest : rest.substring(0, sp2));
           var val = trimStr(sp2 === -1 ? "" : rest.substring(sp2 + 1));
-          if (key === "enabled" || key === "context" || key === "output" || key === "message") {
+          if (key === "date") {
+            var parsedDate = parseCalendarDate(val);
+            if (!parsedDate) msg = "Usage: /time config date <MM/DD/YYYY>";
+            else {
+              T.startMonth = parsedDate[0];
+              T.startDay = parsedDate[1];
+              T.startYear = parsedDate[2];
+              normalizeAnchorDate(T);
+              msg = "Time config date: " + formatCalendarStamp(T);
+            }
+          } else if (key === "enabled" || key === "context" || key === "output" || key === "message") {
             var boolVal = parseOnOff(val);
             if (boolVal === null) msg = "Usage: /time config " + key + " <on|off>";
             else {
@@ -1027,7 +1113,7 @@
             var minutes = parseInt(val, 10);
             if (isNaN(minutes) || minutes < 1 || minutes > 60) msg = "Minutes must be 1-60";
             else { T.minutesPerAction = minutes; msg = "Minutes per action: " + minutes; }
-          } else msg = "Time config keys: enabled, context, output, message, minutes";
+          } else msg = "Time config keys: date, enabled, context, output, message, minutes";
         }
       } else msg = "Unknown /time command: " + action + ". Try /time help";
 
@@ -1051,7 +1137,7 @@
         }
       }
       if (T.enabled && T.showContext && globalThis.stop !== true) {
-        globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: Day: " + T.day + ", Time: " + pad2(T.hour) + ":" + pad2(T.minute) + ", Phase: " + T.phase + "]";
+        globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: Date: " + formatCalendarStamp(T) + ", Time: " + pad2(T.hour) + ":" + pad2(T.minute) + ", Phase: " + T.phase + "]";
       }
       return;
     }
@@ -1060,10 +1146,10 @@
       normalizeTime(T);
       var commandOut = startsWithCommand(T.lastInput || "", "/profile") || startsWithCommand(T.lastInput || "", "/time");
       if (!commandOut && T.enabled && T.showOutput) {
-        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), Day #: " + T.day + "]";
+        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + pad2(T.hour) + ":" + pad2(T.minute) + " (" + T.phase + "), " + formatCalendarStamp(T) + "]";
       }
       if (!commandOut && T.enabled && T.showStateMessage) {
-        state.message = "Day " + T.day + ", " + pad2(T.hour) + ":" + pad2(T.minute);
+        state.message = formatCalendarStamp(T) + " " + pad2(T.hour) + ":" + pad2(T.minute);
       }
       return;
     }
