@@ -1,4 +1,4 @@
-# Dynamic Character Profiles (DCP)
+# Dynamic Character Profiles (DCP)/ Dynamic Time (DT)
 
 DCP is an AI Dungeon scripting system that stores large character profiles in persistent script state and injects only the most relevant slices into model context each turn.
 
