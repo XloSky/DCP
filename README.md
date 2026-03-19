@@ -20,7 +20,7 @@ This build is meant to be pasted into AI Dungeon, not programmed against.
 
 - Library: `versions/1.5.1/dcp-library-merged-v1.5.1.js`
 - Input: `versions/1.5.1/dcp-input-modifier-v1.5.1.js`
-- Context: `versions/1.5.1/dcp-context-modifier-v1.5.1.js`
+- Context: `[versions/1.5.1/dcp-context-modifier-v1.5.1.js](https://github.com/XloSky/DCP/blob/master/scripts/CONTEXT.js)`
 - Output: `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
 
 ## Setup
