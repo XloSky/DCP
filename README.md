@@ -1,58 +1,31 @@
 # Dynamic Character Profiles (DCP)
 
-DCP is an AI Dungeon scripting system that stores large character profiles in persistent script state and injects only the most relevant slices into model context each turn.
+DCP is an AI Dungeon library for two things:
 
-The current build also includes `DCPTime`, a companion time/calendar system that shares the same merged Library file.
+- storing large character profiles without filling Story Cards
+- tracking in-world time, date, seasons, and reminders
 
-It uses a library-centric hook pattern: all logic lives in the Library script, and the Input/Context/Output tabs stay minimal.
+This build is meant to be pasted into AI Dungeon, not programmed against.
+
+## What You Get
+
+- profile storage that stays in script state
+- smart profile injection based on the current scene
+- quick time commands like `/sleep`, `/nap`, `/rest`, and `/wait`
+- calendar date, season, and AM/PM or 24h time
+- optional compact time footer
+- one-shot reminders using `phone` or `alarm`
 
 ## Current Version
 
-- Standalone merged library: `versions/1.5.1/dcp-library-merged-v1.5.1.js`
-- Minimal wrappers:
-  - `versions/1.5.1/dcp-input-modifier-v1.5.1.js`
-  - `versions/1.5.1/dcp-context-modifier-v1.5.1.js`
-  - `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
-
-## What DCP Solves
-
-AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper character data in script state and inject it dynamically based on scene context instead of trying to cram everything into cards.
-
-## Current Feature Set
-
-- Persistent profile storage in `state.dcp.profiles`
-- Persistent time storage in `state.dcpTime`
-- 10 profile sections:
-  - `appearance`, `personality`, `history`, `abilities`, `quirks`, `relationships`, `speech`, `mannerisms`, `species`, `other`
-- Keyword-based character activation with word-boundary checks
-- Weighted activation scoring:
-  - current input is weighted higher than recent history
-- Optional active-profile cap via `maxActive`
-- Category relevance scoring for section selection
-- Per-character injection budget with truncation and partial-fit logic
-- Fallback section injection when nothing scores
-- Batch `/profile` commands with `;;`
-- Safe base64 import/export for single profiles and full profile sets
-- Case-insensitive slash commands
-- Embedded command extraction from Story / Do / Say forms such as `You say "/Time help"`
-- Output run-on repair for common punctuation-spacing issues
-- Time system with:
-  - configurable minutes-per-action
-  - configurable displayed calendar date
-  - configurable footer display mode: `full` or `compact`
-  - configurable `12h` or `24h` display format
-  - configurable macro defaults for `/sleep`, `/nap`, and `/rest`
-  - automatic phase-of-day labeling
-  - rollover snapping such as `07:59 -> 08:00`
-  - quick macro commands such as `/sleep`, `/nap`, `/rest`, and `/wait`
-  - pause and resume control for automatic turn advancement
-  - one-shot reminders with `phone` and `alarm` sources
-  - calendar-style output such as `[Time: 20:23 (Night), 12/31/2026 (Winter)]`
-  - compact footer output such as `[Time: 8:23 PM (Night)]`
+- Library: `versions/1.5.1/dcp-library-merged-v1.5.1.js`
+- Input: `versions/1.5.1/dcp-input-modifier-v1.5.1.js`
+- Context: `versions/1.5.1/dcp-context-modifier-v1.5.1.js`
+- Output: `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
 
 ## Setup
 
-Paste these exact files into AI Dungeon:
+Paste these into AI Dungeon:
 
 1. Library tab:
    - `versions/1.5.1/dcp-library-merged-v1.5.1.js`
@@ -63,287 +36,137 @@ Paste these exact files into AI Dungeon:
 4. Output tab:
    - `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
 
-Minimal wrappers:
+## Quick Start
 
-**Input**
-
-```js
-const modifier = (text) => {
-  globalThis.text = text;
-  globalThis.stop = false;
-
-  if (typeof DCPTime === "function") DCPTime("input");
-  if (globalThis.stop !== true && typeof DCP === "function") DCP("input");
-
-  return {
-    text: globalThis.text || " ",
-    stop: globalThis.stop === true
-  };
-}
-modifier(text)
-```
-
-**Context**
-
-```js
-const modifier = (text) => {
-  globalThis.text = text;
-  globalThis.stop = false;
-
-  if (typeof DCPTime === "function") DCPTime("context");
-  if (globalThis.stop !== true && typeof DCP === "function") DCP("context");
-
-  return {
-    text: globalThis.text || " ",
-    stop: globalThis.stop === true
-  };
-}
-modifier(text)
-```
-
-**Output**
-
-```js
-const modifier = (text) => {
-  globalThis.text = text;
-
-  if (typeof DCP === "function") DCP("output");
-  if (typeof DCPTime === "function") DCPTime("output");
-
-  return { text: globalThis.text || " " };
-}
-modifier(text)
-```
-
-## Profile Name Rules
-
-- Profile keys are normalized to lowercase internally.
-- Underscores are safe and recommended for stable keys.
-- Activation depends on `/profile keywords`, not the key format itself.
-
-## Profile Commands
-
-### Core Profile Commands
-
-- `/profile add <name>`
-- `/profile remove <name>`
-- `/profile delete <name>`
-- `/profile show <name>`
-- `/profile list`
-- `/profile sections`
-- `/profile help`
-
-### Section Editing
-
-- `/profile set <name> <section> <text>`
-- `/profile append <name> <section> <text>`
-- `/profile keywords <name> <word1,word2,...>`
-- `/profile keywords <name>`
-
-### Import / Export
-
-- `/profile import <name> [section] text...`
-- `/profile importb64 <name> [section] <base64>...`
-- `/profile importallb64 [merge|replace] <base64>`
-- `/profile importallb64 begin [merge|replace]`
-- `/profile importallb64 chunk <base64-part>`
-- `/profile importallb64 finish`
-- `/profile export <name>`
-- `/profile exportb64 <name>`
-- `/profile exportallb64`
-- `/profile exportallchunks [merge|replace] [chunkSize]`
-
-Notes:
-
-- Plain `export/import` is human-readable but not fully safe for all characters.
-- `exportb64/importb64` and `exportallb64/importallb64` are safe round-trip formats.
-- `importallb64 merge` updates and creates while keeping existing profiles.
-- `importallb64 replace` clears existing profiles first.
-
-### Profile Config
-
-- `/profile config`
-- `/profile config budget <number>`
-- `/profile config fallback <section>`
-- `/profile config debug <on|off|true|false|1|0>`
-- `/profile config maxActive <number>`
-- `/profile config keywords <section> <word1,word2,...>`
-- `/profile config keywords <section>`
-- `/profile config keywords <section> <clear|reset|off>`
-
-Example:
+If you only want the basics, these are the commands most people need:
 
 ```text
-/profile add nova ;; /profile keywords nova nova,the courier ;; /profile set nova personality Guarded and blunt.
+/profile add hakari
+/profile keywords hakari hakari
+/profile set hakari personality Confident, reckless, and sharp.
+
+/time config date 03/19/2026
+/time config format 12h
+/time set 8:23 PM
+
+/sleep
+/nap
+/rest
+/wait 30m
+
+/remind add phone 6:00 PM Meet Hakari
 ```
 
-## Time Commands
+## Most-Used Commands
 
-### Quick Time Commands
-
-- `/now`
-- `/sleep [time]`
-- `/sleep until <time>`
-- `/nap [duration]`
-- `/rest [duration]`
-- `/wait <duration>`
-- `/wait until <time>`
-- `/waituntil <time>`
-- `/tomorrow [time]`
-- `/pause`
-- `/resume`
-
-### Reminder Commands
-
-- `/remind help`
-- `/remind add <phone|alarm> <time> [lead] <message>`
-- `/remind add <phone|alarm> tomorrow <time> [lead] <message>`
-- `/remind add <phone|alarm> <MM/DD/YYYY> <time> [lead] <message>`
-- `/remind list`
-- `/remind remove <id>`
-
-Examples:
+### Profiles
 
 ```text
+/profile help
+/profile add <name>
+/profile show <name>
+/profile list
+/profile set <name> <section> <text>
+/profile append <name> <section> <text>
+/profile keywords <name> <word1,word2,...>
+/profile remove <name>
+/profile sections
+```
+
+### Time
+
+```text
+/time help
+/now
+/sleep [time]
+/sleep until <time>
+/nap [duration]
+/rest [duration]
+/wait <duration>
+/wait until <time>
+/waituntil <time>
+/tomorrow [time]
+/pause
+/resume
+```
+
+### Reminders
+
+```text
+/remind help
 /remind add phone 6:00 PM Meet Hakari
 /remind add phone tomorrow 6:00 PM 30m Meet Hakari
 /remind add alarm 03/20/2026 8:00 AM Wake up
+/remind list
+/remind remove <id>
 ```
 
-Notes:
-
-- Reminder sources are currently `phone` and `alarm`.
-- If you omit the date, DCP resolves the reminder to the next valid in-world occurrence immediately.
-- Reminders are one-shot. They do not repeat the next day unless you add them again.
-- Lead examples: `15m`, `30m`, `1h`, `1d`
-
-### Admin Time Commands
-
-- `/time help`
-- `/time show`
-- `/time set <time> [nextday]`
-- `/time add <Nd Nh Nm>`
-- `/time config`
-- `/time config date <MM/DD/YYYY>`
-- `/time config display <full|compact>`
-- `/time config format <12h|24h>`
-- `/time config sleep <time>`
-- `/time config nap <duration>`
-- `/time config rest <duration>`
-- `/time config enabled <on|off>`
-- `/time config context <on|off>`
-- `/time config output <on|off>`
-- `/time config message <on|off>`
-- `/time config minutes <1-60>`
-
-Example:
+## Useful Time Settings
 
 ```text
-/time config date 12/31/2026
-/time config display compact
-/time config format 12h
-/time config sleep 9:15 AM
-/time config nap 90m
-/time set 8:23 PM
+/time config date <MM/DD/YYYY>
+/time config format <12h|24h>
+/time config display <full|compact>
+/time config sleep <time>
+/time config nap <duration>
+/time config rest <duration>
+/time config minutes <1-60>
 ```
 
-That can produce output like:
+## What The Time Footer Looks Like
+
+Full:
 
 ```text
 [Time: 8:23 PM (Night), 12/31/2026 (Winter)]
+```
+
+Compact:
+
+```text
 [Time: 8:23 PM (Night)]
 ```
 
-## Runtime Behavior
+## Notes
 
-### DCP Profile Injection
+- Commands are case-insensitive.
+- Commands also work from Story / Do / Say forms like `You say "/Time help"`.
+- If you omit the date in a reminder, DCP resolves it to the next valid in-world time.
+- Reminders are one-shot. They do not repeat automatically.
+- `/sleep`, `/nap`, and `/rest` can use your configured defaults.
 
-Each context turn:
+## Profile Sections
 
-1. DCP scans recent history and current input for profile keywords.
-2. Profiles get weighted hit scores and are sorted by relevance.
-3. `maxActive` is applied. `0` means no cap.
-4. Section categories are scored from the scene language.
-5. Highest-value sections are injected per active profile up to `budget`.
-6. If needed, content is truncated or partially fit to respect total context room.
-7. If no category fits, the configured fallback section is used.
+```text
+appearance
+personality
+history
+abilities
+quirks
+relationships
+speech
+mannerisms
+species
+other
+```
 
-### DCPTime
+## Import / Export
 
-Each turn:
+Use these when moving profiles between scenarios:
 
-1. The system records the latest input.
-2. `/profile` and `/time` command turns do not advance time.
-3. Quick time commands such as `/sleep`, `/nap`, `/rest`, `/wait`, `/tomorrow`, `/pause`, and `/resume` also do not consume automatic turn advancement.
-4. Normal turns advance by `minutesPerAction`, unless time is paused.
-5. If the turn crosses the hour boundary from `:59`, the clock snaps to the next hour.
-6. `/time config date` sets the current displayed date.
-7. Phase is derived from the current hour:
-   - Morning: `06:00-11:59`
-   - Afternoon: `12:00-16:59`
-   - Evening: `17:00-19:59`
-   - Night: `20:00-05:59`
-8. Visible footer format is controlled by:
-   - `/time config display <full|compact>`
-   - `/time config format <12h|24h>`
-9. Default quick-macro behavior is controlled by:
-   - `/time config sleep <time>`
-   - `/time config nap <duration>`
-   - `/time config rest <duration>`
-10. Reminders trigger once when their lead window is crossed.
-11. If a reminder fires during a command-based time jump, the reminder cue is queued and injected into the next non-command story turn.
+```text
+/profile export <name>
+/profile exportb64 <name>
+/profile exportallb64
+/profile exportallchunks [merge|replace] [chunkSize]
 
-## Seasons
+/profile import <name> [section] text...
+/profile importb64 <name> [section] <base64>...
+/profile importallb64 [merge|replace] <base64>
+```
 
-Seasons are derived directly from the displayed month:
+## Limits
 
-- Winter:
-  - December 1 through February 28/29
-- Spring:
-  - March 1 through May 31
-- Summer:
-  - June 1 through August 31
-- Autumn:
-  - September 1 through November 30
-
-Season rollover dates:
-
-- Spring starts on `03/01`
-- Summer starts on `06/01`
-- Autumn starts on `09/01`
-- Winter starts on `12/01`
-
-## Tuning Tips
-
-- Crowd scenes:
-  - lower `budget` and/or set `maxActive`
-- Example:
-  - `/profile config budget 300 ;; /profile config maxActive 3`
-- Duo scenes:
-  - raise `budget` and loosen the cap
-- Example:
-  - `/profile config budget 800 ;; /profile config maxActive 0`
-- Keep keywords specific to avoid accidental activations.
-- Keep section text dense and actionable.
-
-## Limitations
-
-- DCP improves consistency but cannot force perfect model compliance.
-- Very large profile sets can still hit platform context and input limits.
-- Plain export/import is less robust than base64 commands for special characters.
-
-## Recommended Workflow
-
-1. Paste the `v1.5.1` merged library and minimal wrappers.
-2. Build profiles with `import` or `importb64`.
-3. Verify activation with `/profile show` and `/profile keywords`.
-4. Tune `budget` and `maxActive` for scene density.
-5. Set the displayed calendar date with `/time config date`.
-6. Choose your footer style with `/time config display` and `/time config format`.
-7. Set the macro defaults you actually want to use:
-   - `/time config sleep <time>`
-   - `/time config nap <duration>`
-   - `/time config rest <duration>`
-8. Set the clock with `/time set` or use the quick time commands.
-9. Add reminders with `/remind add` if the scenario needs timed prompts.
-10. Use `exportallb64` or `exportallchunks` for migration between scenarios.
+- DCP improves consistency, but it cannot force the model to obey perfectly.
+- Very large profile sets can still hit AI Dungeon limits.
+- Plain import/export is less safe than base64 import/export.
