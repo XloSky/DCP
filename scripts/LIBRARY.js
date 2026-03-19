@@ -1,4 +1,4 @@
-// DCP standalone merged library v1.5.0
+// DCP standalone merged library v1.5.1
 // Includes DCP profiles and DCPTime in one Library file.
 (function () {
   "use strict";
@@ -9,8 +9,8 @@
   ];
   var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var WIDGET_IDS = ["dcp_active", "dcp_budget", "dcp_focus"];
-  var EXTRACT_COMMAND_TOKENS = ["/profile", "/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
-  var TIME_COMMAND_TOKENS = ["/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
+  var EXTRACT_COMMAND_TOKENS = ["/profile", "/remind", "/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
+  var TIME_COMMAND_TOKENS = ["/remind", "/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
 
   function trimStr(s) {
     return String(s || "").replace(/^\s+|\s+$/g, "");
@@ -355,7 +355,12 @@
     if (typeof T.showOutput !== "boolean") T.showOutput = true;
     if (typeof T.showStateMessage !== "boolean") T.showStateMessage = false;
     if (typeof T.timeFormat !== "string") T.timeFormat = "24h";
+    if (typeof T.displayMode !== "string") T.displayMode = "full";
     if (typeof T.minutesPerAction !== "number") T.minutesPerAction = 10;
+    if (typeof T.defaultSleepHour !== "number") T.defaultSleepHour = 8;
+    if (typeof T.defaultSleepMinute !== "number") T.defaultSleepMinute = 0;
+    if (typeof T.defaultNapMinutes !== "number") T.defaultNapMinutes = 60;
+    if (typeof T.defaultRestMinutes !== "number") T.defaultRestMinutes = 240;
     if (typeof T.day !== "number") T.day = 1;
     if (typeof T.hour !== "number") T.hour = 8;
     if (typeof T.minute !== "number") T.minute = 0;
@@ -365,6 +370,9 @@
     if (typeof T.startYear !== "number") T.startYear = NaN;
     if (typeof T.startMonth !== "number") T.startMonth = NaN;
     if (typeof T.startDay !== "number") T.startDay = NaN;
+    if (!Array.isArray(T.reminders)) T.reminders = [];
+    if (!Array.isArray(T.pendingReminderCues)) T.pendingReminderCues = [];
+    if (typeof T.nextReminderId !== "number") T.nextReminderId = 1;
     normalizeTime(T);
     normalizeAnchorDate(T);
     return T;
@@ -398,9 +406,25 @@
     T.showOutput = (T.showOutput !== false);
     T.showStateMessage = !!T.showStateMessage;
     T.timeFormat = normalizeTimeFormat(T.timeFormat) || "24h";
+    T.displayMode = normalizeDisplayMode(T.displayMode) || "full";
+    T.defaultSleepHour = boundInt(parseInt(T.defaultSleepHour, 10), 0, 23, 8);
+    T.defaultSleepMinute = boundInt(parseInt(T.defaultSleepMinute, 10), 0, 59, 0);
+    T.defaultNapMinutes = boundInt(parseInt(T.defaultNapMinutes, 10), 1, 10080, 60);
+    T.defaultRestMinutes = boundInt(parseInt(T.defaultRestMinutes, 10), 1, 10080, 240);
+    if (!Array.isArray(T.reminders)) T.reminders = [];
+    if (!Array.isArray(T.pendingReminderCues)) T.pendingReminderCues = [];
+    T.nextReminderId = parseInt(T.nextReminderId, 10);
+    if (isNaN(T.nextReminderId) || T.nextReminderId < 1) T.nextReminderId = 1;
     T.lastInput = String(T.lastInput || "");
     T.lastAdvanceAction = parseInt(T.lastAdvanceAction, 10);
     if (isNaN(T.lastAdvanceAction)) T.lastAdvanceAction = -1;
+  }
+
+  function boundInt(value, lower, upper, fallback) {
+    if (isNaN(value)) value = fallback;
+    if (value < lower) value = lower;
+    if (value > upper) value = upper;
+    return value;
   }
 
   function parseOnOff(value) {
@@ -440,6 +464,13 @@
     return "";
   }
 
+  function normalizeDisplayMode(value) {
+    var clean = lowerStr(value).replace(/\s+/g, "");
+    if (clean === "full" || clean === "default") return "full";
+    if (clean === "compact" || clean === "hide" || clean === "minimal") return "compact";
+    return "";
+  }
+
   function formatClockParts(hour, minute, format) {
     if ((normalizeTimeFormat(format) || "24h") === "12h") {
       var suffix = (hour >= 12) ? "PM" : "AM";
@@ -463,27 +494,69 @@
     return out;
   }
 
+  function parseLeadingDuration(text) {
+    var source = trimStr(text);
+    if (!source) return { minutes: 0, ok: false, rest: "" };
+    var tokens = source.split(/\s+/);
+    var used = [];
+    for (var i = 0; i < tokens.length; i++) {
+      if (/^\d+(?:d|h|m)$/i.test(tokens[i])) used.push(tokens[i]);
+      else break;
+    }
+    if (!used.length) return { minutes: 0, ok: false, rest: source };
+    var parsed = parseDuration(used.join(" "));
+    return {
+      minutes: durationToMinutes(parsed),
+      ok: parsed.ok,
+      rest: trimStr(tokens.slice(used.length).join(" "))
+    };
+  }
+
+  function durationToMinutes(duration) {
+    duration = duration || {};
+    return ((parseInt(duration.d, 10) || 0) * 1440) + ((parseInt(duration.h, 10) || 0) * 60) + (parseInt(duration.m, 10) || 0);
+  }
+
+  function minutesToDurationText(totalMinutes) {
+    totalMinutes = parseInt(totalMinutes, 10);
+    if (isNaN(totalMinutes) || totalMinutes < 0) totalMinutes = 0;
+    var days = Math.floor(totalMinutes / 1440);
+    totalMinutes = totalMinutes % 1440;
+    var hours = Math.floor(totalMinutes / 60);
+    var minutes = totalMinutes % 60;
+    var parts = [];
+    if (days > 0) parts.push(days + "d");
+    if (hours > 0) parts.push(hours + "h");
+    if (minutes > 0 || !parts.length) parts.push(minutes + "m");
+    return parts.join(" ");
+  }
+
   function applyTimeMacros(_T, _lowerInput) {
     return;
   }
 
   function applyDurationAdvance(T, duration) {
+    var previousMs = getWorldTimestampMs(T);
     duration = duration || {};
     T.day += parseInt(duration.d, 10) || 0;
     T.hour += parseInt(duration.h, 10) || 0;
     T.minute += parseInt(duration.m, 10) || 0;
     normalizeTime(T);
+    processReminderEvents(T, previousMs, getWorldTimestampMs(T));
   }
 
   function advanceToNextDayTime(T, hour, minute) {
+    var previousMs = getWorldTimestampMs(T);
     normalizeTime(T);
     T.day += 1;
     T.hour = hour;
     T.minute = minute;
     normalizeTime(T);
+    processReminderEvents(T, previousMs, getWorldTimestampMs(T));
   }
 
   function advanceToNextOccurrenceTime(T, hour, minute) {
+    var previousMs = getWorldTimestampMs(T);
     normalizeTime(T);
     var currentMinutes = (T.hour * 60) + T.minute;
     var targetMinutes = (hour * 60) + minute;
@@ -491,6 +564,7 @@
     T.hour = hour;
     T.minute = minute;
     normalizeTime(T);
+    processReminderEvents(T, previousMs, getWorldTimestampMs(T));
   }
 
   function getActionCount() {
@@ -498,6 +572,7 @@
   }
 
   function advanceTurnTime(T) {
+    var previousMs = getWorldTimestampMs(T);
     var delta = parseInt(T.minutesPerAction, 10);
     var baseMinute = parseInt(T.minute, 10);
     if (isNaN(delta) || delta < 1) delta = 10;
@@ -507,6 +582,8 @@
       T.hour += Math.floor(T.minute / 60);
       T.minute = 0;
     }
+    normalizeTime(T);
+    processReminderEvents(T, previousMs, getWorldTimestampMs(T));
   }
 
   function normalizeAnchorDate(T) {
@@ -603,6 +680,168 @@
     return formatTimeWithPhase(T) + ", " + formatCalendarStamp(T);
   }
 
+  function formatVisibleTimeStamp(T) {
+    return ((normalizeDisplayMode(T.displayMode) || "full") === "compact")
+      ? formatTimeWithPhase(T)
+      : formatCurrentTimeStamp(T);
+  }
+
+  function getWorldTimestampMs(T) {
+    normalizeTime(T);
+    var parts = getCalendarParts(T);
+    return Date.UTC(parts.year, parts.month - 1, parts.day, T.hour, T.minute, 0, 0);
+  }
+
+  function getDueTimestampMs(reminder) {
+    return Date.UTC(reminder.year, reminder.month - 1, reminder.day, reminder.hour, reminder.minute, 0, 0);
+  }
+
+  function getReminderDefaultLeadMinutes(source) {
+    source = lowerStr(source);
+    if (source === "alarm") return 0;
+    return 30;
+  }
+
+  function getReminderSourceLabel(source) {
+    source = lowerStr(source);
+    if (source === "alarm") return "Alarm";
+    return "Phone reminder";
+  }
+
+  function queueReminderCue(T, reminder) {
+    var prefix = getReminderSourceLabel(reminder.source);
+    var detail = reminder.message;
+    if ((parseInt(reminder.leadMinutes, 10) || 0) > 0) {
+      detail += ". Due in " + minutesToDurationText(reminder.leadMinutes) + ".";
+    }
+    T.pendingReminderCues.push("[" + prefix + ": " + detail + "]");
+  }
+
+  function processReminderEvents(T, previousMs, nextMs) {
+    if (!Array.isArray(T.reminders) || !T.reminders.length) return;
+    if (typeof previousMs !== "number" || typeof nextMs !== "number" || nextMs < previousMs) return;
+    for (var i = T.reminders.length - 1; i >= 0; i--) {
+      var reminder = T.reminders[i];
+      if (!reminder || typeof reminder !== "object") {
+        T.reminders.splice(i, 1);
+        continue;
+      }
+      var dueMs = getDueTimestampMs(reminder);
+      var triggerMs = dueMs - ((parseInt(reminder.leadMinutes, 10) || 0) * 60000);
+      if (previousMs < triggerMs && triggerMs <= nextMs) {
+        queueReminderCue(T, reminder);
+        T.reminders.splice(i, 1);
+      }
+    }
+  }
+
+  function maybeFireReminderImmediately(T, reminder) {
+    var nowMs = getWorldTimestampMs(T);
+    var dueMs = getDueTimestampMs(reminder);
+    var triggerMs = dueMs - ((parseInt(reminder.leadMinutes, 10) || 0) * 60000);
+    if (dueMs <= nowMs) return false;
+    if (triggerMs <= nowMs) {
+      queueReminderCue(T, reminder);
+      return true;
+    }
+    return false;
+  }
+
+  function parseReminderSource(raw) {
+    var source = lowerStr(raw);
+    return (source === "phone" || source === "alarm") ? source : "";
+  }
+
+  function splitClockPrefix(text) {
+    var clean = trimStr(text);
+    if (!clean) return null;
+    var parts = clean.split(/\s+/);
+    if (!parts.length) return null;
+    var two = (parts.length > 1) ? (parts[0] + " " + parts[1]) : "";
+    var parsedTwo = two ? parseClockTime(two) : null;
+    if (parsedTwo) return { hour: parsedTwo[0], minute: parsedTwo[1], rest: trimStr(parts.slice(2).join(" ")) };
+    var parsedOne = parseClockTime(parts[0]);
+    if (parsedOne) return { hour: parsedOne[0], minute: parsedOne[1], rest: trimStr(parts.slice(1).join(" ")) };
+    return null;
+  }
+
+  function addDaysToDate(year, month, day, amount) {
+    var date = new Date(Date.UTC(year, month - 1, day));
+    date.setUTCDate(date.getUTCDate() + amount);
+    return [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()];
+  }
+
+  function resolveReminderWhen(T, raw) {
+    var text = trimStr(raw);
+    var currentParts = getCalendarParts(T);
+    var currentMinutes = (T.hour * 60) + T.minute;
+    var dateMatch = text.match(/^(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})\s+([\s\S]+)$/);
+    if (dateMatch) {
+      var parsedDate = parseCalendarDate(dateMatch[1]);
+      var parsedClock = splitClockPrefix(dateMatch[2]);
+      if (!parsedDate || !parsedClock) return null;
+      return {
+        year: parsedDate[2],
+        month: parsedDate[0],
+        day: parsedDate[1],
+        hour: parsedClock.hour,
+        minute: parsedClock.minute,
+        rest: parsedClock.rest
+      };
+    }
+    if (/^tomorrow\b/i.test(text)) {
+      var tomorrowClock = splitClockPrefix(text.replace(/^tomorrow\b/i, ""));
+      if (!tomorrowClock) return null;
+      var tomorrowDate = addDaysToDate(currentParts.year, currentParts.month, currentParts.day, 1);
+      return {
+        year: tomorrowDate[0],
+        month: tomorrowDate[1],
+        day: tomorrowDate[2],
+        hour: tomorrowClock.hour,
+        minute: tomorrowClock.minute,
+        rest: tomorrowClock.rest
+      };
+    }
+    var clockOnly = splitClockPrefix(text);
+    if (!clockOnly) return null;
+    var targetMinutes = (clockOnly.hour * 60) + clockOnly.minute;
+    var resolvedDate = (currentMinutes < targetMinutes)
+      ? [currentParts.year, currentParts.month, currentParts.day]
+      : addDaysToDate(currentParts.year, currentParts.month, currentParts.day, 1);
+    return {
+      year: resolvedDate[0],
+      month: resolvedDate[1],
+      day: resolvedDate[2],
+      hour: clockOnly.hour,
+      minute: clockOnly.minute,
+      rest: clockOnly.rest
+    };
+  }
+
+  function formatReminderDue(reminder, format) {
+    return pad2(reminder.month) + "/" + pad2(reminder.day) + "/" + String(reminder.year) + " " + formatClockParts(reminder.hour, reminder.minute, format);
+  }
+
+  function buildReminderFromCommand(T, source, raw) {
+    var resolved = resolveReminderWhen(T, raw);
+    if (!resolved) return null;
+    var lead = parseLeadingDuration(resolved.rest);
+    var message = lead.ok ? lead.rest : resolved.rest;
+    message = trimStr(message);
+    if (!message) return null;
+    return {
+      id: T.nextReminderId++,
+      source: source,
+      year: resolved.year,
+      month: resolved.month,
+      day: resolved.day,
+      hour: resolved.hour,
+      minute: resolved.minute,
+      leadMinutes: lead.ok ? lead.minutes : getReminderDefaultLeadMinutes(source),
+      message: message
+    };
+  }
+
   function parseClockWithNextday(raw) {
     var text = trimStr(raw);
     var nextday = false;
@@ -630,7 +869,8 @@
       "/waituntil": "Usage: /waituntil <time>",
       "/sleep": "Usage: /sleep [time] | /sleep until <time>",
       "/tomorrow": "Usage: /tomorrow [time]",
-      "/time set": "Usage: /time set <time> [nextday]"
+      "/time set": "Usage: /time set <time> [nextday]",
+      "/remind add": "Usage: /remind add <phone|alarm> <time|tomorrow <time>|MM/DD/YYYY <time>> [lead] <message>"
     };
     return map[name] || ("Usage: " + name);
   }
@@ -661,21 +901,28 @@
     ].join("\n");
   }
 
+  function remindHelpText() {
+    return [
+      "=== Reminder Commands ===",
+      "/remind add <phone|alarm> <time> [lead] <message>",
+      "/remind add <phone|alarm> tomorrow <time> [lead] <message>",
+      "/remind add <phone|alarm> <MM/DD/YYYY> <time> [lead] <message>",
+      "/remind list",
+      "/remind remove <id>",
+      "",
+      "Examples:",
+      "/remind add phone 6:00 PM Meet Hakari",
+      "/remind add phone tomorrow 6:00 PM 30m Meet Hakari",
+      "/remind add alarm 03/20/2026 8:00 AM Wake up",
+      "",
+      "Reminder sources: phone, alarm",
+      "Lead examples: 15m, 30m, 1h, 1d"
+    ].join("\n");
+  }
+
   function timeHelpText() {
     return [
       "=== DCP Time Commands ===",
-      "/time show",
-      "/time set <time> [nextday]",
-      "/time add <Nd Nh Nm>",
-      "/time config",
-      "/time config date <MM/DD/YYYY>",
-      "/time config format <12h|24h>",
-      "/time config enabled <on|off>",
-      "/time config context <on|off>",
-      "/time config output <on|off>",
-      "/time config message <on|off>",
-      "/time config minutes <1-60>",
-      "",
       "Quick commands:",
       "/now",
       "/sleep [time]",
@@ -689,8 +936,88 @@
       "/pause",
       "/resume",
       "",
+      "Reminder commands:",
+      "/remind help",
+      "/remind add <phone|alarm> <when> [lead] <message>",
+      "/remind list",
+      "/remind remove <id>",
+      "",
+      "Admin commands:",
+      "/time help",
+      "/time show",
+      "/time set <time> [nextday]",
+      "/time add <Nd Nh Nm>",
+      "/time config",
+      "/time config date <MM/DD/YYYY>",
+      "/time config display <full|compact>",
+      "/time config format <12h|24h>",
+      "/time config sleep <time>",
+      "/time config nap <duration>",
+      "/time config rest <duration>",
+      "/time config enabled <on|off>",
+      "/time config context <on|off>",
+      "/time config output <on|off>",
+      "/time config message <on|off>",
+      "/time config minutes <1-60>",
+      "",
+      "Examples:",
+      "/sleep until 8:30 AM",
+      "/wait 30m",
+      "/time config display compact",
+      "/time config nap 90m",
+      "/remind add phone 6:00 PM Meet Hakari",
+      "",
       "Time values accept 20:23 or 8:23 PM."
     ].join("\n");
+  }
+
+  function handleRemindCommand(cmd, T) {
+    var argStr = trimStr(cmd.substring("/remind".length));
+    var sp = argStr.indexOf(" ");
+    var action = lowerStr(sp === -1 ? argStr : argStr.substring(0, sp));
+    var rest = trimStr(sp === -1 ? "" : argStr.substring(sp + 1));
+    if (!action || action === "help") return remindHelpText();
+
+    if (action === "add") {
+      var sourceSplit = rest.indexOf(" ");
+      var source = parseReminderSource(sourceSplit === -1 ? rest : rest.substring(0, sourceSplit));
+      if (!source || sourceSplit === -1) return quickTimeUsage("/remind add");
+      var reminder = buildReminderFromCommand(T, source, trimStr(rest.substring(sourceSplit + 1)));
+      if (!reminder) return quickTimeUsage("/remind add");
+      if (getDueTimestampMs(reminder) <= getWorldTimestampMs(T)) {
+        return "Reminder time has already passed.";
+      }
+      if (maybeFireReminderImmediately(T, reminder)) {
+        return "Reminder queued now: #" + reminder.id + " | " + getReminderSourceLabel(reminder.source) + " | " + reminder.message;
+      }
+      T.reminders.push(reminder);
+      return "Reminder added: #" + reminder.id + " | " + getReminderSourceLabel(reminder.source) + " | " + formatReminderDue(reminder, T.timeFormat) + " | lead " + minutesToDurationText(reminder.leadMinutes) + " | " + reminder.message;
+    }
+
+    if (action === "list") {
+      if (!T.reminders.length) return "No active reminders.";
+      var items = T.reminders.slice();
+      items.sort(function (a, b) { return getDueTimestampMs(a) - getDueTimestampMs(b); });
+      var lines = [];
+      for (var i = 0; i < items.length; i++) {
+        lines.push("#" + items[i].id + " | " + getReminderSourceLabel(items[i].source) + " | " + formatReminderDue(items[i], T.timeFormat) + " | lead " + minutesToDurationText(items[i].leadMinutes) + " | " + items[i].message);
+      }
+      return lines.join("\n");
+    }
+
+    if (action === "remove" || action === "delete") {
+      var id = parseInt(rest, 10);
+      if (isNaN(id) || id < 1) return "Usage: /remind remove <id>";
+      for (var r = 0; r < T.reminders.length; r++) {
+        if (parseInt(T.reminders[r].id, 10) === id) {
+          var removed = T.reminders.splice(r, 1)[0];
+          return "Reminder removed: #" + removed.id + " | " + removed.message;
+        }
+      }
+      return "Reminder not found: #" + id;
+    }
+
+    return "Unknown /remind command: " + action + ". Try /remind help";
   }
 
   function handleQuickTimeCommand(cmd, T) {
@@ -699,35 +1026,35 @@
 
     if (startsWithCommand(text, "/now")) {
       normalizeTime(T);
-      return "Time: " + formatCurrentTimeStamp(T) + " | paused=" + (T.paused ? "on" : "off");
+      return "Time: " + formatVisibleTimeStamp(T) + " | paused=" + (T.paused ? "on" : "off");
     }
 
     if (startsWithCommand(text, "/pause")) {
       T.paused = true;
       normalizeTime(T);
-      return "Time paused: " + formatCurrentTimeStamp(T);
+      return "Time paused: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/resume")) {
       T.paused = false;
       normalizeTime(T);
-      return "Time resumed: " + formatCurrentTimeStamp(T);
+      return "Time resumed: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/nap")) {
       var napRest = trimStr(text.substring("/nap".length));
-      var napDuration = napRest ? parseDuration(napRest) : { d: 0, h: 1, m: 0, ok: true };
+      var napDuration = napRest ? parseDuration(napRest) : { d: 0, h: 0, m: T.defaultNapMinutes, ok: true };
       if (!napDuration.ok) return quickTimeUsage("/nap");
       applyDurationAdvance(T, napDuration);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/rest")) {
       var restText = trimStr(text.substring("/rest".length));
-      var restDuration = restText ? parseDuration(restText) : { d: 0, h: 4, m: 0, ok: true };
+      var restDuration = restText ? parseDuration(restText) : { d: 0, h: 0, m: T.defaultRestMinutes, ok: true };
       if (!restDuration.ok) return quickTimeUsage("/rest");
       applyDurationAdvance(T, restDuration);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/waituntil")) {
@@ -735,7 +1062,7 @@
       var waitUntilTime = parseClockTime(waitUntilText);
       if (!waitUntilTime) return quickTimeUsage("/waituntil");
       advanceToNextOccurrenceTime(T, waitUntilTime[0], waitUntilTime[1]);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/wait")) {
@@ -745,28 +1072,28 @@
         var waitTarget = parseOptionalTargetClock(waitRest, 0, 0);
         if (!waitTarget) return quickTimeUsage("/wait");
         advanceToNextOccurrenceTime(T, waitTarget[0], waitTarget[1]);
-        return "Time advanced: " + formatCurrentTimeStamp(T);
+        return "Time advanced: " + formatVisibleTimeStamp(T);
       }
       var waitDuration = parseDuration(waitRest);
       if (!waitDuration.ok) return quickTimeUsage("/wait");
       applyDurationAdvance(T, waitDuration);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/sleep")) {
       var sleepRest = trimStr(text.substring("/sleep".length));
-      var sleepTarget = parseOptionalTargetClock(sleepRest, 8, 0);
+      var sleepTarget = parseOptionalTargetClock(sleepRest, T.defaultSleepHour, T.defaultSleepMinute);
       if (!sleepTarget) return quickTimeUsage("/sleep");
       advanceToNextDayTime(T, sleepTarget[0], sleepTarget[1]);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     if (startsWithCommand(text, "/tomorrow")) {
       var tomorrowRest = trimStr(text.substring("/tomorrow".length));
-      var tomorrowTarget = parseOptionalTargetClock(tomorrowRest, 8, 0);
+      var tomorrowTarget = parseOptionalTargetClock(tomorrowRest, T.defaultSleepHour, T.defaultSleepMinute);
       if (!tomorrowTarget) return quickTimeUsage("/tomorrow");
       advanceToNextDayTime(T, tomorrowTarget[0], tomorrowTarget[1]);
-      return "Time advanced: " + formatCurrentTimeStamp(T);
+      return "Time advanced: " + formatVisibleTimeStamp(T);
     }
 
     return null;
@@ -1266,6 +1593,10 @@
         setPendingMessage(S, "time", quickMsg);
         return;
       }
+      if (startsWithCommand(T.lastInput, "/remind")) {
+        setPendingMessage(S, "time", handleRemindCommand(T.lastInput, T));
+        return;
+      }
       if (!startsWithCommand(T.lastInput, "/time")) return;
 
       var argStr = trimStr(T.lastInput.substring("/time".length));
@@ -1275,18 +1606,20 @@
       var msg = "";
 
       if (!action || action === "help") msg = timeHelpText();
-      else if (action === "show" || action === "status") msg = "Time: " + formatCurrentTimeStamp(T) + " | format=" + T.timeFormat + " | enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction;
+      else if (action === "show" || action === "status") msg = "Time: " + formatCurrentTimeStamp(T) + " | display=" + T.displayMode + " | format=" + T.timeFormat + " | enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutesPerAction=" + T.minutesPerAction + " | reminders=" + T.reminders.length;
       else if (action === "set") {
         if (!rest) msg = quickTimeUsage("/time set");
         else {
           var parsedSet = parseClockWithNextday(rest);
           if (!parsedSet) msg = quickTimeUsage("/time set");
           else {
+            var previousSetMs = getWorldTimestampMs(T);
             T.hour = parsedSet.hour;
             T.minute = parsedSet.minute;
             if (parsedSet.nextday) T.day += 1;
             normalizeTime(T);
-            msg = "Time set: " + formatCurrentTimeStamp(T);
+            processReminderEvents(T, previousSetMs, getWorldTimestampMs(T));
+            msg = "Time set: " + formatVisibleTimeStamp(T);
           }
         }
       } else if (action === "add") {
@@ -1294,10 +1627,10 @@
         if (!duration.ok) msg = "Usage: /time add <Nd Nh Nm> (example: /time add 1d 4h 30m)";
         else {
           applyDurationAdvance(T, duration);
-          msg = "Time advanced: " + formatCurrentTimeStamp(T);
+          msg = "Time advanced: " + formatVisibleTimeStamp(T);
         }
       } else if (action === "config") {
-        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | format=" + T.timeFormat + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | date=" + formatCalendarStamp(T) + " | time=" + formatClockDisplay(T);
+        if (!rest) msg = "Time config: enabled=" + (T.enabled ? "on" : "off") + " | paused=" + (T.paused ? "on" : "off") + " | display=" + T.displayMode + " | format=" + T.timeFormat + " | context=" + (T.showContext ? "on" : "off") + " | output=" + (T.showOutput ? "on" : "off") + " | message=" + (T.showStateMessage ? "on" : "off") + " | minutes=" + T.minutesPerAction + " | sleep=" + formatClockParts(T.defaultSleepHour, T.defaultSleepMinute, T.timeFormat) + " | nap=" + minutesToDurationText(T.defaultNapMinutes) + " | rest=" + minutesToDurationText(T.defaultRestMinutes) + " | date=" + formatCalendarStamp(T) + " | time=" + formatClockDisplay(T) + " | reminders=" + T.reminders.length;
         else {
           var sp2 = rest.indexOf(" ");
           var key = lowerStr(sp2 === -1 ? rest : rest.substring(0, sp2));
@@ -1317,6 +1650,33 @@
               normalizeTime(T);
               msg = "Time format: " + T.timeFormat;
             }
+          } else if (key === "display") {
+            var parsedDisplay = normalizeDisplayMode(val);
+            if (!parsedDisplay) msg = "Usage: /time config display <full|compact>";
+            else {
+              T.displayMode = parsedDisplay;
+              normalizeTime(T);
+              msg = "Time display: " + T.displayMode;
+            }
+          } else if (key === "sleep") {
+            var parsedSleep = parseClockTime(val);
+            if (!parsedSleep) msg = "Usage: /time config sleep <time>";
+            else {
+              T.defaultSleepHour = parsedSleep[0];
+              T.defaultSleepMinute = parsedSleep[1];
+              normalizeTime(T);
+              msg = "Default sleep time: " + formatClockParts(T.defaultSleepHour, T.defaultSleepMinute, T.timeFormat);
+            }
+          } else if (key === "nap" || key === "rest") {
+            var parsedDuration = parseDuration(val);
+            var totalDuration = durationToMinutes(parsedDuration);
+            if (!parsedDuration.ok || totalDuration < 1) msg = "Usage: /time config " + key + " <duration>";
+            else {
+              if (key === "nap") T.defaultNapMinutes = totalDuration;
+              else T.defaultRestMinutes = totalDuration;
+              normalizeTime(T);
+              msg = "Default " + key + " duration: " + minutesToDurationText(key === "nap" ? T.defaultNapMinutes : T.defaultRestMinutes);
+            }
           } else if (key === "enabled" || key === "context" || key === "output" || key === "message") {
             var boolVal = parseOnOff(val);
             if (boolVal === null) msg = "Usage: /time config " + key + " <on|off>";
@@ -1331,7 +1691,7 @@
             var minutes = parseInt(val, 10);
             if (isNaN(minutes) || minutes < 1 || minutes > 60) msg = "Minutes must be 1-60";
             else { T.minutesPerAction = minutes; msg = "Minutes per action: " + minutes; }
-          } else msg = "Time config keys: date, format, enabled, context, output, message, minutes";
+          } else msg = "Time config keys: date, display, format, sleep, nap, rest, enabled, context, output, message, minutes";
         }
       } else msg = "Unknown /time command: " + action + ". Try /time help";
 
@@ -1350,9 +1710,13 @@
           if (!commandTurn) {
             applyTimeMacros(T, effectiveInput.toLowerCase());
             advanceTurnTime(T);
-            normalizeTime(T);
           }
         }
+      }
+      var reminderCommandTurn = startsWithCommand(T.lastInput || "", "/profile") || startsWithAnyCommand(T.lastInput || "", TIME_COMMAND_TOKENS);
+      if (T.pendingReminderCues.length && !reminderCommandTurn && globalThis.stop !== true) {
+        globalThis.text = String(globalThis.text || "") + "\n\n" + T.pendingReminderCues.join("\n");
+        T.pendingReminderCues = [];
       }
       if (T.enabled && T.showContext && globalThis.stop !== true) {
         globalThis.text = String(globalThis.text || "") + "\n\n[Use this timing information: Date: " + formatCalendarStamp(T) + ", Time: " + formatClockDisplay(T) + ", Phase: " + T.phase + "]";
@@ -1364,10 +1728,10 @@
       normalizeTime(T);
       var commandOut = startsWithCommand(T.lastInput || "", "/profile") || startsWithAnyCommand(T.lastInput || "", TIME_COMMAND_TOKENS);
       if (!commandOut && T.enabled && T.showOutput) {
-        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + formatClockDisplay(T) + " (" + T.phase + "), " + formatCalendarStamp(T) + "]";
+        globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + formatVisibleTimeStamp(T) + "]";
       }
       if (!commandOut && T.enabled && T.showStateMessage) {
-        state.message = formatCalendarStamp(T) + " " + formatClockDisplay(T);
+        state.message = formatVisibleTimeStamp(T);
       }
       return;
     }
