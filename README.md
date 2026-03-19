@@ -1,4 +1,4 @@
-# Dynamic Character Profiles (DCP)/ Dynamic Time (DT)
+# Dynamic Character Profiles (DCP)
 
 DCP is an AI Dungeon scripting system that stores large character profiles in persistent script state and injects only the most relevant slices into model context each turn.
 
@@ -8,11 +8,11 @@ It uses a library-centric hook pattern: all logic lives in the Library script, a
 
 ## Current Version
 
-- Standalone merged library: `versions/1.5.0/dcp-library-merged-v1.5.0.js`
+- Standalone merged library: `versions/1.5.1/dcp-library-merged-v1.5.1.js`
 - Minimal wrappers:
-  - `versions/1.5.0/dcp-input-modifier-v1.5.0.js`
-  - `versions/1.5.0/dcp-context-modifier-v1.5.0.js`
-  - `versions/1.5.0/dcp-output-modifier-v1.5.0.js`
+  - `versions/1.5.1/dcp-input-modifier-v1.5.1.js`
+  - `versions/1.5.1/dcp-context-modifier-v1.5.1.js`
+  - `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
 
 ## What DCP Solves
 
@@ -39,25 +39,29 @@ AI Dungeon Story Cards have practical size limits. DCP lets you keep deeper char
 - Time system with:
   - configurable minutes-per-action
   - configurable displayed calendar date
+  - configurable footer display mode: `full` or `compact`
   - configurable `12h` or `24h` display format
+  - configurable macro defaults for `/sleep`, `/nap`, and `/rest`
   - automatic phase-of-day labeling
   - rollover snapping such as `07:59 -> 08:00`
   - quick macro commands such as `/sleep`, `/nap`, `/rest`, and `/wait`
   - pause and resume control for automatic turn advancement
+  - one-shot reminders with `phone` and `alarm` sources
   - calendar-style output such as `[Time: 20:23 (Night), 12/31/2026 (Winter)]`
+  - compact footer output such as `[Time: 8:23 PM (Night)]`
 
 ## Setup
 
 Paste these exact files into AI Dungeon:
 
 1. Library tab:
-   - `versions/1.5.0/dcp-library-merged-v1.5.0.js`
+   - `versions/1.5.1/dcp-library-merged-v1.5.1.js`
 2. Input tab:
-   - `versions/1.5.0/dcp-input-modifier-v1.5.0.js`
+   - `versions/1.5.1/dcp-input-modifier-v1.5.1.js`
 3. Context tab:
-   - `versions/1.5.0/dcp-context-modifier-v1.5.0.js`
+   - `versions/1.5.1/dcp-context-modifier-v1.5.1.js`
 4. Output tab:
-   - `versions/1.5.0/dcp-output-modifier-v1.5.0.js`
+   - `versions/1.5.1/dcp-output-modifier-v1.5.1.js`
 
 Minimal wrappers:
 
@@ -175,6 +179,8 @@ Example:
 
 ## Time Commands
 
+### Quick Time Commands
+
 - `/now`
 - `/sleep [time]`
 - `/sleep until <time>`
@@ -186,13 +192,44 @@ Example:
 - `/tomorrow [time]`
 - `/pause`
 - `/resume`
+
+### Reminder Commands
+
+- `/remind help`
+- `/remind add <phone|alarm> <time> [lead] <message>`
+- `/remind add <phone|alarm> tomorrow <time> [lead] <message>`
+- `/remind add <phone|alarm> <MM/DD/YYYY> <time> [lead] <message>`
+- `/remind list`
+- `/remind remove <id>`
+
+Examples:
+
+```text
+/remind add phone 6:00 PM Meet Hakari
+/remind add phone tomorrow 6:00 PM 30m Meet Hakari
+/remind add alarm 03/20/2026 8:00 AM Wake up
+```
+
+Notes:
+
+- Reminder sources are currently `phone` and `alarm`.
+- If you omit the date, DCP resolves the reminder to the next valid in-world occurrence immediately.
+- Reminders are one-shot. They do not repeat the next day unless you add them again.
+- Lead examples: `15m`, `30m`, `1h`, `1d`
+
+### Admin Time Commands
+
 - `/time help`
 - `/time show`
 - `/time set <time> [nextday]`
 - `/time add <Nd Nh Nm>`
 - `/time config`
 - `/time config date <MM/DD/YYYY>`
+- `/time config display <full|compact>`
 - `/time config format <12h|24h>`
+- `/time config sleep <time>`
+- `/time config nap <duration>`
+- `/time config rest <duration>`
 - `/time config enabled <on|off>`
 - `/time config context <on|off>`
 - `/time config output <on|off>`
@@ -203,14 +240,18 @@ Example:
 
 ```text
 /time config date 12/31/2026
+/time config display compact
 /time config format 12h
+/time config sleep 9:15 AM
+/time config nap 90m
 /time set 8:23 PM
 ```
 
-That produces output like:
+That can produce output like:
 
 ```text
 [Time: 8:23 PM (Night), 12/31/2026 (Winter)]
+[Time: 8:23 PM (Night)]
 ```
 
 ## Runtime Behavior
@@ -242,7 +283,15 @@ Each turn:
    - Afternoon: `12:00-16:59`
    - Evening: `17:00-19:59`
    - Night: `20:00-05:59`
-8. Display format is controlled by `/time config format <12h|24h>`.
+8. Visible footer format is controlled by:
+   - `/time config display <full|compact>`
+   - `/time config format <12h|24h>`
+9. Default quick-macro behavior is controlled by:
+   - `/time config sleep <time>`
+   - `/time config nap <duration>`
+   - `/time config rest <duration>`
+10. Reminders trigger once when their lead window is crossed.
+11. If a reminder fires during a command-based time jump, the reminder cue is queued and injected into the next non-command story turn.
 
 ## Seasons
 
@@ -282,15 +331,19 @@ Season rollover dates:
 - DCP improves consistency but cannot force perfect model compliance.
 - Very large profile sets can still hit platform context and input limits.
 - Plain export/import is less robust than base64 commands for special characters.
-- The README tracks the supported workflow. Legacy widget scaffolding still exists in code but is intentionally not part of the current documented setup.
 
 ## Recommended Workflow
 
-1. Paste the `v1.5.0` merged library and minimal wrappers.
+1. Paste the `v1.5.1` merged library and minimal wrappers.
 2. Build profiles with `import` or `importb64`.
 3. Verify activation with `/profile show` and `/profile keywords`.
 4. Tune `budget` and `maxActive` for scene density.
 5. Set the displayed calendar date with `/time config date`.
-6. Choose `12h` or `24h` output with `/time config format`.
-7. Set the clock with `/time set` or use the quick time commands.
-8. Use `exportallb64` or `exportallchunks` for migration between scenarios.
+6. Choose your footer style with `/time config display` and `/time config format`.
+7. Set the macro defaults you actually want to use:
+   - `/time config sleep <time>`
+   - `/time config nap <duration>`
+   - `/time config rest <duration>`
+8. Set the clock with `/time set` or use the quick time commands.
+9. Add reminders with `/remind add` if the scenario needs timed prompts.
+10. Use `exportallb64` or `exportallchunks` for migration between scenarios.
