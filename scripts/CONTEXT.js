@@ -9,5 +9,5 @@ const modifier = (text) => {
     text: globalThis.text || " ",
     stop: globalThis.stop === true
   };
-}
-modifier(text)
+};
+modifier(text);
