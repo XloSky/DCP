@@ -1,4 +1,4 @@
-# Dynamic Character Profiles (DCP)
+# Dynamic Character Profiles (DCP)/ Dynamic Time (DT)
 
 DCP is an AI Dungeon script set for two things:
 
@@ -42,13 +42,13 @@ Previous stable archive:
 Paste these into AI Dungeon:
 
 1. Library tab:
-   - [DCP_v4_1_LIBRARY.js](releases/1.6.0/DCP_v4_1_LIBRARY.js)
+   - [LIBRARY.js](scripts/LIBRARY.js)
 2. Input tab:
-   - [INPUT_MODIFIER.js](releases/1.6.0/INPUT_MODIFIER.js)
+   - [INPUT.js](scripts/INPUT.js)
 3. Context tab:
-   - [CONTEXT_MODIFIER.js](releases/1.6.0/CONTEXT_MODIFIER.js)
+   - [CONTEXT.js](scripts/CONTEXT.js)
 4. Output tab:
-   - [OUTPUT_MODIFIER.js](releases/1.6.0/OUTPUT_MODIFIER.js)
+   - [OUTPUT.js](scripts/OUTPUT.js)
 
 ## Quick Start
 
