@@ -5,5 +5,5 @@ const modifier = (text) => {
   if (typeof DCPTime === "function") DCPTime("output");
 
   return { text: globalThis.text || " " };
-}
-modifier(text)
+};
+modifier(text);
