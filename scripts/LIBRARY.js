@@ -1,12 +1,24 @@
-// DCP standalone merged library v1.5.1
+// DCP standalone merged library v1.6.0
 // Includes DCP profiles and DCPTime in one Library file.
 (function () {
   "use strict";
 
   var SECTIONS = [
-    "appearance", "personality", "history", "abilities", "quirks",
-    "relationships", "speech", "mannerisms", "species", "other"
+    "behavior", "speech", "capabilities", "reactions"
   ];
+  var LEGACY_SECTION_MAP = {
+    appearance: "behavior",
+    personality: "behavior",
+    history: "behavior",
+    abilities: "capabilities",
+    quirks: "behavior",
+    relationships: "reactions",
+    mannerisms: "behavior",
+    species: "behavior",
+    other: "behavior",
+    speech: "speech"
+  };
+  var MAX_SECTIONS_PER_PROFILE = 2;
   var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var WIDGET_IDS = ["dcp_active", "dcp_budget", "dcp_focus"];
   var EXTRACT_COMMAND_TOKENS = ["/profile", "/remind", "/time", "/waituntil", "/wait", "/sleep", "/nap", "/rest", "/tomorrow", "/now", "/pause", "/resume"];
@@ -95,26 +107,41 @@
     return (lowerStr(raw).indexOf(token) === 0) ? (token + raw.substring(token.length)) : raw;
   }
 
-  function extractEmbeddedCommand(raw, token) {
+  function findEmbeddedCommand(raw, token) {
     raw = String(raw || "");
     token = lowerStr(token);
     var lower = raw.toLowerCase();
     var idx = lower.indexOf(token);
     while (idx !== -1) {
       if (idx === 0 || isCommandBoundary(raw.charAt(idx - 1))) {
-        return stripTrailingCommandNoise(stripOuterQuotes(canonicalizeCommandPrefix(raw.substring(idx), token)));
+        return {
+          index: idx,
+          command: stripTrailingCommandNoise(stripOuterQuotes(canonicalizeCommandPrefix(raw.substring(idx), token)))
+        };
       }
       idx = lower.indexOf(token, idx + 1);
     }
-    return "";
+    return null;
+  }
+
+  function extractEmbeddedCommand(raw, token) {
+    var found = findEmbeddedCommand(raw, token);
+    return found ? found.command : "";
+  }
+
+  function findAnyCommand(raw) {
+    var best = null;
+    for (var i = 0; i < EXTRACT_COMMAND_TOKENS.length; i++) {
+      var found = findEmbeddedCommand(raw, EXTRACT_COMMAND_TOKENS[i]);
+      if (!found) continue;
+      if (!best || found.index < best.index) best = found;
+    }
+    return best;
   }
 
   function extractAnyCommand(raw) {
-    for (var i = 0; i < EXTRACT_COMMAND_TOKENS.length; i++) {
-      var found = extractEmbeddedCommand(raw, EXTRACT_COMMAND_TOKENS[i]);
-      if (found) return found;
-    }
-    return "";
+    var found = findAnyCommand(raw);
+    return found ? found.command : "";
   }
 
   function profileSize(profile) {
@@ -141,18 +168,69 @@
     return out;
   }
 
+  function normalizeSectionName(section) {
+    var clean = lowerStr(section);
+    if (SECTIONS.indexOf(clean) !== -1) return clean;
+    if (LEGACY_SECTION_MAP.hasOwnProperty(clean)) return LEGACY_SECTION_MAP[clean];
+    return "";
+  }
+
+  function appendSectionText(existing, addition) {
+    existing = trimStr(existing);
+    addition = trimStr(addition);
+    if (!addition) return existing;
+    if (!existing) return addition;
+    if (existing.indexOf(addition) !== -1) return existing;
+    return existing + " " + addition;
+  }
+
+  function appendMappedSection(targetSections, rawSection, value) {
+    var mapped = normalizeSectionName(rawSection);
+    var cleanValue = trimStr(value);
+    if (!mapped || !cleanValue) return;
+    targetSections[mapped] = appendSectionText(targetSections[mapped], cleanValue);
+  }
+
+  function migrateProfileSections(profile) {
+    if (!profile || typeof profile !== "object") return;
+    var incoming = ensurePlainObject(profile.sections);
+    var migrated = {};
+    for (var rawSection in incoming) {
+      if (!incoming.hasOwnProperty(rawSection)) continue;
+      if (typeof incoming[rawSection] !== "string") continue;
+      appendMappedSection(migrated, rawSection, incoming[rawSection]);
+    }
+    profile.sections = migrated;
+  }
+
   function defaultSectionKeywords() {
     return {
-      appearance: ["appearance","look","looks","looked","describe","description","features","face","eyes","hair","body","height","build","clothing","clothes","outfit","wearing","uniform","armor"],
-      personality: ["personality","temperament","attitude","demeanor","mood","emotion","feeling","feel","feels","calm","angry","nervous","confident","shy","kind","cruel","friendly","polite","rude","humor"],
-      history: ["history","backstory","background","past","origin","grew up","childhood","before","previously","once","years ago","remember","memory","memories","former","used to"],
-      abilities: ["abilities","ability","power","powers","skills","skill","talent","talents","strength","weakness","fight","combat","attack","defend","magic","spell","weapon","tactics","capable","can"],
-      quirks: ["quirk","quirks","habit","habits","odd","peculiar","strange","unusual","tick","tics","obsession","fear","phobia","favorite","routine","compulsion"],
-      relationships: ["relationship","relationships","friend","friends","enemy","enemies","rival","ally","partner","family","parent","sibling","mentor","student","bond","trust","loyal","romance"],
-      speech: ["speech","voice","tone","accent","says","said","speak","speaks","speaking","whisper","shout","dialogue","phrase","phrasing","word choice"],
-      mannerisms: ["mannerism","mannerisms","gesture","gestures","posture","movement","moves","walk","walks","stance","fidget","nod","shrug","glance","expression","body language"],
-      species: ["species","race","lineage","ancestry","biology","anatomy","physiology","human","humanoid","creature","beast","monster","nonhuman","instinct","traits"],
-      other: ["other","misc","miscellaneous","notes","detail","details","extra","additional","general","context"]
+      behavior: [
+        "approach","approaches","approached","step closer","steps closer","close the distance",
+        "pulls back","retreat","retreats","keeps distance","leans against","crosses arms",
+        "crosses her arms","crosses his arms","pushes off","watches you","holds your gaze",
+        "stays close","nudges your arm","tilts her head","tilts his head","goes still",
+        "fidget","fidgets","hovers near"
+      ],
+      speech: [
+        "says","said","asks","asked","replies","replied","answers","answered",
+        "voice low","voice flat","voice quiet","after a pause","murmurs","mutter",
+        "mutters","muttered","whisper","whispers","whispered","snaps","snapped",
+        "drawls","dryly"
+      ],
+      capabilities: [
+        "takes the wheel","take the wheel","drives","drive","driving","shoot","shoots",
+        "fight","fights","draw","draws","drawn","scan","scanner","spoof","spoofs",
+        "unlock","unlocks","ram","rams","kick","kicks","carry","carries","notice",
+        "notices","noticed","remember","remembers","remembered"
+      ],
+      reactions: [
+        "jaw tightens","breath hitches","expression softens","looks away","goes still",
+        "doesn't flinch","doesnt flinch","doesn't move away","doesnt move away",
+        "pulls back","voice loses","softens slightly","stares at the floor","slumps",
+        "blush","blushes","blushing","jealous","hurt","afraid","scared","flustered",
+        "tremble","trembles","trembling","defensive","protective","possessive","territorial"
+      ]
     };
   }
 
@@ -161,11 +239,12 @@
     var custom = ensurePlainObject(overrides);
     for (var section in custom) {
       if (!custom.hasOwnProperty(section)) continue;
-      if (SECTIONS.indexOf(section) === -1) continue;
+      var mapped = normalizeSectionName(section);
+      if (!mapped) continue;
       if (!custom[section] || !custom[section].length) continue;
       for (var i = 0; i < custom[section].length; i++) {
         var keyword = lowerStr(custom[section][i]);
-        if (keyword && base[section].indexOf(keyword) === -1) base[section].push(keyword);
+        if (keyword && base[mapped].indexOf(keyword) === -1) base[mapped].push(keyword);
       }
     }
     return base;
@@ -247,6 +326,7 @@
     }
     return out;
   }
+
   function utf8ToBytes(str) {
     if (typeof TextEncoder === "function") {
       try {
@@ -319,8 +399,8 @@
 
     S.config.budget = parseInt(S.config.budget, 10);
     if (isNaN(S.config.budget) || S.config.budget < 100) S.config.budget = 800;
-    S.config.fallback = lowerStr(S.config.fallback || "personality");
-    if (SECTIONS.indexOf(S.config.fallback) === -1) S.config.fallback = "personality";
+    S.config.fallback = normalizeSectionName(S.config.fallback || "behavior");
+    if (SECTIONS.indexOf(S.config.fallback) === -1) S.config.fallback = "behavior";
     S.config.debug = !!S.config.debug;
     S.config.widgets = !!S.config.widgets;
     S.config.maxActive = parseInt(S.config.maxActive, 10);
@@ -330,12 +410,22 @@
     if (typeof S.importBuffer.active !== "boolean") S.importBuffer.active = false;
     if (S.importBuffer.mode !== "replace") S.importBuffer.mode = "merge";
     if (typeof S.importBuffer.payload !== "string") S.importBuffer.payload = "";
+    for (var name in S.profiles) {
+      if (!S.profiles.hasOwnProperty(name)) continue;
+      if (!S.profiles[name] || typeof S.profiles[name] !== "object") {
+        S.profiles[name] = { keywords: [name], sections: {} };
+      }
+      if (!Array.isArray(S.profiles[name].keywords) || !S.profiles[name].keywords.length) S.profiles[name].keywords = [name];
+      migrateProfileSections(S.profiles[name]);
+    }
     return S;
   }
 
   function setPendingMessage(S, source, msg) {
-    state.message = msg;
-    S._pending = msg;
+    msg = String(msg || "");
+    if (S._pending) S._pending += "\n---\n" + msg;
+    else S._pending = msg;
+    state.message = S._pending;
     S._pendingSource = source;
     globalThis.text = " ";
     globalThis.stop = false;
@@ -576,12 +666,8 @@
     var delta = parseInt(T.minutesPerAction, 10);
     var baseMinute = parseInt(T.minute, 10);
     if (isNaN(delta) || delta < 1) delta = 10;
-    if (isNaN(baseMinute) || baseMinute < 0) baseMinute = 0;
+    if (isNaN(baseMinute)) baseMinute = 0;
     T.minute = baseMinute + delta;
-    if (T.minute >= 60) {
-      T.hour += Math.floor(T.minute / 60);
-      T.minute = 0;
-    }
     normalizeTime(T);
     processReminderEvents(T, previousMs, getWorldTimestampMs(T));
   }
@@ -1115,10 +1201,10 @@
       var srcProfile = ensurePlainObject(source[rawName]);
       var srcSections = ensurePlainObject(srcProfile.sections);
       var cleanSections = {};
-      for (var i = 0; i < SECTIONS.length; i++) {
-        var section = SECTIONS[i];
-        var val = srcSections[section];
-        if (typeof val === "string" && trimStr(val)) cleanSections[section] = val;
+      for (var rawSection in srcSections) {
+        if (!srcSections.hasOwnProperty(rawSection)) continue;
+        if (typeof srcSections[rawSection] !== "string" || !trimStr(srcSections[rawSection])) continue;
+        appendMappedSection(cleanSections, rawSection, srcSections[rawSection]);
       }
       var cleanKeywords = [];
       if (srcProfile.keywords && srcProfile.keywords.length) {
@@ -1134,6 +1220,7 @@
     results.push("Imported all profiles (" + mode + "): created=" + created + ", updated=" + updated + ", skipped=" + skipped + ", total=" + (created + updated));
     return true;
   }
+
   function handleProfileCommand(cmd, S, results) {
     var argStr = trimStr(cmd.substring("/profile".length));
     var sp = argStr.indexOf(" ");
@@ -1201,10 +1288,11 @@
       var after = trimStr(rest.substring(p1 + 1));
       var p2 = after.indexOf(" ");
       if (p2 === -1) { results.push("Usage: /profile " + action + " <name> <section> <text>"); return; }
-      var section = lowerStr(after.substring(0, p2));
+      var rawSection = after.substring(0, p2);
+      var section = normalizeSectionName(rawSection);
       var value = trimStr(after.substring(p2 + 1));
       if (!S.profiles[name]) { results.push("Not found: " + name + (action === "set" ? ". Use /profile add first." : "")); return; }
-      if (SECTIONS.indexOf(section) === -1) { results.push("Bad section: " + section + (action === "set" ? ". Use /profile sections" : "")); return; }
+      if (SECTIONS.indexOf(section) === -1) { results.push("Bad section: " + rawSection + (action === "set" ? ". Use /profile sections" : "")); return; }
       if (action === "set") S.profiles[name].sections[section] = value;
       else S.profiles[name].sections[section] = trimStr(safeText(S.profiles[name].sections[section]) + " " + value);
       results.push(name + "." + section + " " + (action === "set" ? "set" : "appended") + " (" + S.profiles[name].sections[section].length + " chars)");
@@ -1237,13 +1325,14 @@
       while (pos < body.length) {
         var ob = body.indexOf("[", pos), cb = body.indexOf("]", ob);
         if (ob === -1 || cb === -1) break;
-        var tag = lowerStr(body.substring(ob + 1, cb));
+        var rawTag = lowerStr(body.substring(ob + 1, cb));
+        var tag = (rawTag === "keywords") ? "keywords" : normalizeSectionName(rawTag);
         if (tag === "keywords" || SECTIONS.indexOf(tag) !== -1) {
           if (current !== null && start >= 0) {
             var content = trimStr(body.substring(start, ob));
             if (content) {
               if (current === "keywords") S.profiles[importName].keywords = parseKeywords(content);
-              else { S.profiles[importName].sections[current] = content; count += 1; }
+              else { S.profiles[importName].sections[current] = appendSectionText(S.profiles[importName].sections[current], content); count += 1; }
             }
           }
           current = tag;
@@ -1255,7 +1344,7 @@
         var last = trimStr(body.substring(start));
         if (last) {
           if (current === "keywords") S.profiles[importName].keywords = parseKeywords(last);
-          else { S.profiles[importName].sections[current] = last; count += 1; }
+          else { S.profiles[importName].sections[current] = appendSectionText(S.profiles[importName].sections[current], last); count += 1; }
         }
       }
       results.push("Imported " + count + " sections for " + importName + " (" + profileSize(S.profiles[importName]) + " chars)");
@@ -1268,14 +1357,15 @@
       var bName = normalizeName(rest.substring(0, b1));
       var bBody = trimStr(rest.substring(b1 + 1));
       if (!S.profiles[bName]) S.profiles[bName] = { keywords: [bName], sections: {} };
-      var re = /\[([a-zA-Z]+)\]\s*([A-Za-z0-9+\/=_-]+)/g, match, imported = 0;
+      var re = /\[([a-zA-Z]+)\]\s*([A-Za-z0-9+\/_=-]+)/g, match, imported = 0;
       while ((match = re.exec(bBody)) !== null) {
-        var tag = lowerStr(match[1]);
+        var rawTag = lowerStr(match[1]);
+        var tag = (rawTag === "keywords") ? "keywords" : normalizeSectionName(rawTag);
         if (tag !== "keywords" && SECTIONS.indexOf(tag) === -1) continue;
         var decoded = fromBase64(match[2]);
         if (decoded === null) { results.push("Invalid base64 for [" + tag + "]"); continue; }
         if (tag === "keywords") S.profiles[bName].keywords = parseKeywords(decoded);
-        else { S.profiles[bName].sections[tag] = decoded; imported += 1; }
+        else { S.profiles[bName].sections[tag] = appendSectionText(S.profiles[bName].sections[tag], decoded); imported += 1; }
       }
       results.push("Imported " + imported + " sections (b64) for " + bName + " (" + profileSize(S.profiles[bName]) + " chars)");
       return;
@@ -1376,7 +1466,7 @@
         S.config.budget = num; results.push("Budget: " + num); return;
       }
       if (key === "fallback") {
-        var fallback = lowerStr(val);
+        var fallback = normalizeSectionName(val);
         if (SECTIONS.indexOf(fallback) === -1) { results.push("Bad section: " + val); return; }
         S.config.fallback = fallback; results.push("Fallback: " + fallback); return;
       }
@@ -1395,9 +1485,10 @@
         var sectionAndWords = trimStr(val);
         if (!sectionAndWords) { results.push("Usage: /profile config keywords <section> <word1,word2,...> | clear"); return; }
         var spk = sectionAndWords.indexOf(" ");
-        var secName = lowerStr(spk === -1 ? sectionAndWords : sectionAndWords.substring(0, spk));
+        var rawSecName = (spk === -1 ? sectionAndWords : sectionAndWords.substring(0, spk));
+        var secName = normalizeSectionName(rawSecName);
         var wordsRaw = trimStr(spk === -1 ? "" : sectionAndWords.substring(spk + 1));
-        if (SECTIONS.indexOf(secName) === -1) { results.push("Bad section: " + secName + ". Use /profile sections"); return; }
+        if (SECTIONS.indexOf(secName) === -1) { results.push("Bad section: " + rawSecName + ". Use /profile sections"); return; }
         if (!wordsRaw) {
           var current = S.config.sectionKeywords[secName] || [];
           results.push("Keyword override for " + secName + ": " + (current.length ? current.join(", ") : "(none)")); return;
@@ -1496,16 +1587,19 @@
       for (var ai = 0; ai < active.length; ai++) {
         var activeName = active[ai], pObj = profiles[activeName];
         if (!pObj || !pObj.sections) continue;
-        var partsOut = [], used = 0, header = "[ " + activeName + " ]";
+        var partsOut = [], used = 0, addedSections = 0, header = "[ " + activeName + " ]";
         used += header.length + 2;
         for (var ri = 0; ri < ranked.length; ri++) {
           if (used >= S.config.budget) break;
+          if (addedSections >= MAX_SECTIONS_PER_PROFILE) break;
+          if (ranked[ri].score < 1) continue;
           var sec = ranked[ri].cat, content = safeText(pObj.sections[sec]);
           if (!content) continue;
           var label = sec + ": ", remain = S.config.budget - used;
           if (label.length + content.length <= remain) {
             partsOut.push(label + content);
             used += label.length + content.length + 1;
+            addedSections += 1;
           } else {
             var maxContent = remain - label.length;
             if (maxContent <= 20) continue;
@@ -1513,6 +1607,7 @@
             if (lastDot > maxContent * 0.4) truncated = truncated.substring(0, lastDot + 1);
             partsOut.push(label + truncated);
             used += label.length + truncated.length + 1;
+            addedSections += 1;
           }
         }
         if (!partsOut.length && pObj.sections[S.config.fallback]) {
@@ -1735,5 +1830,41 @@
       }
       return;
     }
+  };
+
+  globalThis.DCPInputRouter = function DCPInputRouter(text) {
+    var raw = String(text || "");
+    var S = ensureDcpState();
+    clearPendingMessage(S);
+    globalThis.text = raw;
+    globalThis.stop = false;
+
+    var parts = raw.split(";;");
+    var hasCommand = false;
+
+    for (var i = 0; i < parts.length; i++) {
+      var segment = trimStr(parts[i]);
+      if (!segment) continue;
+      var command = extractAnyCommand(segment);
+      if (!command) continue;
+      hasCommand = true;
+      globalThis.text = command;
+      if (startsWithCommand(command, "/profile")) {
+        if (typeof DCP === "function") DCP("input");
+      } else if (startsWithAnyCommand(command, TIME_COMMAND_TOKENS)) {
+        if (typeof DCPTime === "function") DCPTime("input");
+      }
+    }
+
+    if (!hasCommand) {
+      globalThis.text = raw;
+      globalThis.stop = false;
+      return { text: globalThis.text || " ", stop: false };
+    }
+
+    return {
+      text: globalThis.text || " ",
+      stop: globalThis.stop === true
+    };
   };
 })();
