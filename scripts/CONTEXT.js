@@ -2,8 +2,12 @@ const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
 
-  if (typeof DCPTime === "function") DCPTime("context");
-  if (globalThis.stop !== true && typeof DCP === "function") DCP("context");
+  if (typeof DCPInputRouter === "function") {
+    return DCPInputRouter(text);
+  }
+
+  if (typeof DCPTime === "function") DCPTime("input");
+  if (globalThis.stop !== true && typeof DCP === "function") DCP("input");
 
   return {
     text: globalThis.text || " ",
