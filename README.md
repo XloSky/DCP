@@ -30,13 +30,6 @@ Previous stable archive:
 
 - `releases/1.5.2/`
 
-`1.6.3` keeps the normal four AI Dungeon script tabs, but the main logic is centralized in the merged library file:
-
-- `releases/1.6.3/LIBRARY.js`
-- `releases/1.6.3/INPUT.js`
-- `releases/1.6.3/CONTEXT.js`
-- `releases/1.6.3/OUTPUT.js`
-
 ## Setup
 
 Paste these into AI Dungeon:
