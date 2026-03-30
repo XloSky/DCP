@@ -1,4 +1,4 @@
-// DCP standalone merged library v1.6.0
+// DCP v1.6.3 - LIBRARY.js
 // Includes DCP profiles and DCPTime in one Library file.
 (function () {
   "use strict";
@@ -1821,11 +1821,10 @@
 
     if (hook === "output") {
       normalizeTime(T);
-      var commandOut = startsWithCommand(T.lastInput || "", "/profile") || startsWithAnyCommand(T.lastInput || "", TIME_COMMAND_TOKENS);
-      if (!commandOut && T.enabled && T.showOutput) {
+      if (T.enabled && T.showOutput) {
         globalThis.text = String(globalThis.text || "") + "\n\n[Time: " + formatVisibleTimeStamp(T) + "]";
       }
-      if (!commandOut && T.enabled && T.showStateMessage) {
+      if (T.enabled && T.showStateMessage) {
         state.message = formatVisibleTimeStamp(T);
       }
       return;
@@ -1859,7 +1858,12 @@
     if (!hasCommand) {
       globalThis.text = raw;
       globalThis.stop = false;
-      return { text: globalThis.text || " ", stop: false };
+      if (typeof DCPTime === "function") DCPTime("input");
+      if (globalThis.stop !== true && typeof DCP === "function") DCP("input");
+      return {
+        text: globalThis.text || " ",
+        stop: globalThis.stop === true
+      };
     }
 
     return {
@@ -1868,3 +1872,6 @@
     };
   };
 })();
+
+
+
