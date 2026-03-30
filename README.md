@@ -1,4 +1,4 @@
-# Dynamic Character Profiles (DCP)/ Dynamic Time (DT)
+# Dynamic Character Profiles (DCP)
 
 DCP is an AI Dungeon script set for two things:
 
@@ -24,18 +24,18 @@ This build is meant to be pasted into AI Dungeon, not programmed against.
 
 Latest release in this workspace:
 
-- `releases/1.6.0/`
+- `releases/1.6.3/`
 
 Previous stable archive:
 
 - `releases/1.5.2/`
 
-`1.6.0` keeps the normal four AI Dungeon script tabs, but the main logic is centralized in the merged library file:
+`1.6.3` keeps the normal four AI Dungeon script tabs, but the main logic is centralized in the merged library file:
 
-- `releases/1.6.0/DCP_v4_1_LIBRARY.js`
-- `releases/1.6.0/INPUT_MODIFIER.js`
-- `releases/1.6.0/CONTEXT_MODIFIER.js`
-- `releases/1.6.0/OUTPUT_MODIFIER.js`
+- `releases/1.6.3/LIBRARY.js`
+- `releases/1.6.3/INPUT.js`
+- `releases/1.6.3/CONTEXT.js`
+- `releases/1.6.3/OUTPUT.js`
 
 ## Setup
 
@@ -52,28 +52,47 @@ Paste these into AI Dungeon:
 
 ## Quick Start
 
-If you only want the basics, these are the commands most people need:
+If you want DCP working fast, do these in order.
+
+Rule of thumb:
+
+- Story Card = short, always-on basics
+- DCP Profile = deeper details, behaviors, reactions, and situational nuance
+
+### 1. Make a profile
 
 ```text
 /profile add hakari
 /profile keywords hakari hakari
 /profile set hakari behavior Confident, reckless, and sharp.
+```
 
-/time config date 03/19/2026
+### 2. Turn time on
+
+```text
+/time config enabled on
+/time config output on
 /time config format 12h
+/time config display compact
+/time config date 03/19/2026
 /time set 8:23 PM
+```
 
+### 3. Use the quick time commands if you want them
+
+```text
 /sleep
 /nap
 /rest
 /wait 30m
-
 /remind add phone 6:00 PM Meet Hakari
 ```
 
 ## Most-Used Commands
 
 ### Profiles
+
+Use these to create, edit, and check profiles:
 
 ```text
 /profile help
@@ -96,6 +115,8 @@ If you only want the basics, these are the commands most people need:
 
 ### Time
 
+Use these to check, move, and configure in-world time:
+
 ```text
 /time help
 /time show
@@ -116,6 +137,8 @@ If you only want the basics, these are the commands most people need:
 
 ### Reminders
 
+Use these for one-shot reminders and alarms:
+
 ```text
 /remind help
 /remind add phone 6:00 PM Meet Hakari
@@ -125,7 +148,11 @@ If you only want the basics, these are the commands most people need:
 /remind remove <id>
 ```
 
-## Useful Time Settings
+## Useful Settings
+
+### Profile settings
+
+Use these when you want to control how much profile detail DCP injects:
 
 ```text
 /profile config budget <chars>
@@ -136,14 +163,14 @@ If you only want the basics, these are the commands most people need:
 /profile config keywords <section> <word1,word2,...>
 ```
 
-Profile settings:
-
 - `budget` defaults to `800`
 - `fallback` defaults to `behavior`
 - `maxActive 0` means no cap
 - debug widgets only matter if you are using BetterDungeon
 
-Time settings:
+### Time settings
+
+Use these when you want to control how time appears and progresses:
 
 ```text
 /time config date <MM/DD/YYYY>
@@ -175,12 +202,14 @@ Compact:
 
 ## Profile Sections
 
-Current live sections:
+These are the four live DCP sections:
 
-- `behavior`
-- `speech`
-- `capabilities`
-- `reactions`
+- `behavior`: how the character acts, approaches situations, moves, and generally carries themselves
+- `speech`: tone, phrasing, cadence, favorite wording, and how they usually talk
+- `capabilities`: skills, powers, talents, knowledge, or physical advantages
+- `reactions`: emotional tells, jealousy, protectiveness, embarrassment, fear, softness, and other response patterns
+
+You do not need to fill every section for every profile. Even one or two solid sections can be enough.
 
 Legacy sections are still accepted and auto-mapped when profiles are loaded or imported:
 
@@ -197,7 +226,7 @@ Legacy sections are still accepted and auto-mapped when profiles are loaded or i
 
 ## Import / Export
 
-Use these when moving profiles between scenarios:
+Use these when moving profiles between scenarios or backing them up:
 
 ```text
 /profile export <name>
@@ -217,10 +246,11 @@ Use these when moving profiles between scenarios:
 
 - Commands are case-insensitive.
 - Commands also work from Story / Do / Say forms like `You say "/time help"`.
+- DCP works best alongside Story Cards, not as a full replacement for them.
 - If you omit the date in a reminder, DCP resolves it to the next valid in-world time.
 - Reminders are one-shot and do not repeat automatically.
 - `/sleep`, `/nap`, and `/rest` can use your configured defaults.
-- `1.6.0` injects at most two sections per active profile, chosen by scene relevance, with fallback to your configured section if nothing scores.
+- `1.6.3` injects at most two sections per active profile, chosen by scene relevance, with fallback to your configured section if nothing scores.
 - Old profiles still work, but older multi-section profiles are compressed into the new 4-section model.
 
 ## Limits
@@ -229,3 +259,6 @@ Use these when moving profiles between scenarios:
 - Very large profile sets can still hit AI Dungeon context limits.
 - Plain import/export is less safe than base64 import/export.
 - Legacy profiles are supported, but custom old section names outside the built-in mapping will not migrate automatically.
+
+
+
