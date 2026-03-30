@@ -1,13 +1,10 @@
+// DCP v1.6.3 - CONTEXT.js
 const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
 
-  if (typeof DCPInputRouter === "function") {
-    return DCPInputRouter(text);
-  }
-
-  if (typeof DCPTime === "function") DCPTime("input");
-  if (globalThis.stop !== true && typeof DCP === "function") DCP("input");
+  if (typeof DCPTime === "function") DCPTime("context");
+  if (globalThis.stop !== true && typeof DCP === "function") DCP("context");
 
   return {
     text: globalThis.text || " ",
@@ -15,3 +12,5 @@ const modifier = (text) => {
   };
 };
 modifier(text);
+
+
