@@ -56,7 +56,7 @@ Rule of thumb:
 
 ```text
 /profile add hakari
-/profile keywords hakari hakari
+/profile keywords hakari
 /profile set hakari behavior Confident, reckless, and sharp.
 ```
 
