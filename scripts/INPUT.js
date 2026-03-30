@@ -1,6 +1,11 @@
+// DCP v1.6.3 - INPUT.js
 const modifier = (text) => {
   globalThis.text = text;
   globalThis.stop = false;
+
+  if (typeof DCPInputRouter === "function") {
+    return DCPInputRouter(text);
+  }
 
   if (typeof DCPTime === "function") DCPTime("input");
   if (globalThis.stop !== true && typeof DCP === "function") DCP("input");
@@ -9,5 +14,7 @@ const modifier = (text) => {
     text: globalThis.text || " ",
     stop: globalThis.stop === true
   };
-}
-modifier(text)
+};
+modifier(text);
+
+
